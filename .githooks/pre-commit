@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Bumps the project version on every commit and stages the files it touched.
+#
+# Skipped during merge, rebase, cherry-pick and revert: those replay or combine
+# commits that already carry their own bump, and bumping again would produce a
+# version nobody chose. Set SKIP_VERSION_BUMP=1 to skip it by hand.
+set -e
+
+if [ -n "$SKIP_VERSION_BUMP" ]; then
+    exit 0
+fi
+
+root=$(git rev-parse --show-toplevel)
+gitdir=$(git rev-parse --git-dir)
+
+for marker in MERGE_HEAD CHERRY_PICK_HEAD REVERT_HEAD rebase-merge rebase-apply; do
+    if [ -e "$gitdir/$marker" ]; then
+        exit 0
+    fi
+done
+
+if ! command -v node >/dev/null 2>&1; then
+    echo "pre-commit: node not found, skipping version bump" >&2
+    exit 0
+fi
+
+cd "$root"
+
+version=$(node scripts/bump-version.mjs)
+
+git add package.json package-lock.json src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/tauri.conf.json
+
+echo "pre-commit: version bumped to $version"

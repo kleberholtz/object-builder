@@ -1,0 +1,145 @@
+name: Release
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # The four build jobs share one release, so it is created here instead of by
+  # each of them: four jobs racing to find-or-create the same tag is how you end
+  # up with duplicate releases holding one asset each.
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      release_id: ${{ steps.release.outputs.id }}
+      skip: ${{ steps.release.outputs.skip }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - id: version
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+
+      # Every commit bumps the version, but a re-run or a push that changes
+      # nothing else must not republish a version that already shipped.
+      - id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          existing=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+            --jq ".[] | select(.tag_name == \"$TAG\") | \"\(.id) \(.draft)\"" | awk 'NR == 1')
+
+          if [ -n "$existing" ]; then
+            id=${existing%% *}
+            draft=${existing##* }
+            if [ "$draft" = "false" ]; then
+              echo "skip=true" >> "$GITHUB_OUTPUT"
+              echo "id=" >> "$GITHUB_OUTPUT"
+              echo "::notice::$TAG is already published, skipping."
+              exit 0
+            fi
+            # A draft left behind by a run that failed midway: reuse it, so the
+            # platforms that did upload keep their assets.
+            echo "::notice::Reusing the existing draft for $TAG."
+          else
+            gh release create "$TAG" \
+              --draft \
+              --target "$GITHUB_SHA" \
+              --title "Object Builder $VERSION" \
+              --notes "Stable release $VERSION, built from $GITHUB_SHA."
+            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
+              --jq ".[] | select(.tag_name == \"$TAG\") | .id" | awk 'NR == 1')
+          fi
+
+          echo "skip=false" >> "$GITHUB_OUTPUT"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: prepare
+    if: success() && needs.prepare.outputs.skip == 'false'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            args: ""
+          - platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: ""
+          - platform: macos-latest
+            target: aarch64-apple-darwin
+            args: "--target aarch64-apple-darwin"
+          - platform: macos-latest
+            target: x86_64-apple-darwin
+            args: "--target x86_64-apple-darwin"
+
+    runs-on: ${{ matrix.platform }}
+    steps:
+      - uses: actions/checkout@v5
+
+      # webkit2gtk 4.1 is the Tauri v2 line, and 22.04 is the oldest runner that
+      # carries it — building there is what keeps the AppImage's glibc floor low.
+      - name: Install Linux dependencies
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            libxdo-dev \
+            libssl-dev \
+            patchelf \
+            build-essential \
+            file \
+            wget
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - run: npm ci
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          releaseId: ${{ needs.prepare.outputs.release_id }}
+          includeUpdaterJson: false
+          args: ${{ matrix.args }}
+
+  # The release stays a draft until every platform has uploaded, so nobody
+  # downloads a version that is missing three of its four builds.
+  publish:
+    needs: [prepare, build]
+    if: success() && needs.prepare.outputs.skip == 'false'
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${{ needs.prepare.outputs.release_id }}" -F draft=false -f make_latest=true
