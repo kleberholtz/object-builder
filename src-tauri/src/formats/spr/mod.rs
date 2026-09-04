@@ -6,7 +6,11 @@ use crate::{
     formats::{read_u16_le, read_u32_le, ObjectFormat},
 };
 use serde::{Deserialize, Serialize};
-use std::{fs, io::Read, path::Path};
+use std::{
+    fs,
+    io::{Read, Seek, SeekFrom},
+    path::Path,
+};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SprHeader {
@@ -67,6 +71,36 @@ impl SprFormat {
             ));
         }
         Ok(header)
+    }
+
+    pub fn validate_offsets<F>(
+        &self,
+        path: &Path,
+        header: &SprHeader,
+        mut progress: F,
+    ) -> Result<()>
+    where
+        F: FnMut(u32, u32),
+    {
+        let mut file = fs::File::open(path)?;
+        let file_length = file.metadata()?.len();
+        file.seek(SeekFrom::Start(header.table_offset as u64))?;
+        let mut offset_bytes = [0_u8; 4];
+        for index in 0..header.sprite_count {
+            file.read_exact(&mut offset_bytes)?;
+            let offset = u64::from(u32::from_le_bytes(offset_bytes));
+            if offset != 0 && offset.saturating_add(5) > file_length {
+                return Err(ObjectBuilderError::InvalidSpr(format!(
+                    "sprite {} points outside the file (offset {offset}, file size {file_length})",
+                    index + 1
+                )));
+            }
+            let processed = index + 1;
+            if processed % 4096 == 0 || processed == header.sprite_count {
+                progress(processed, header.sprite_count);
+            }
+        }
+        Ok(())
     }
 
     fn inspect_header(&self, bytes: &[u8]) -> Result<SprHeader> {
@@ -165,5 +199,23 @@ mod tests {
         assert_eq!(header.signature, 0x4c22_0594);
         assert_eq!(header.sprite_count, 732_782);
         assert_eq!(header.table_offset, 8);
+    }
+
+    #[test]
+    fn validates_the_real_860_offset_table_when_available() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../860/Tibia.spr");
+        if !path.exists() {
+            return;
+        }
+        let format = SprFormat {
+            version: ClientVersion::Tibia860,
+            extended: true,
+        };
+        let header = format.inspect_path(&path).expect("real SPR header");
+        let mut final_count = 0;
+        format
+            .validate_offsets(&path, &header, |processed, _| final_count = processed)
+            .expect("valid offset table");
+        assert_eq!(final_count, header.sprite_count);
     }
 }

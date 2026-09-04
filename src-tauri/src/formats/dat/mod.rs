@@ -442,30 +442,58 @@ fn attribute_name(attribute: u8) -> Option<&'static str> {
         34 => "Usable",
         35 => "Wrappable",
         36 => "Unwrappable",
-        37 => "Top effect", 252 => "Floor change", 253 => "No move animation", 254 => "Chargeable",
+        37 => "Top effect",
+        252 => "Floor change",
+        253 => "No move animation",
+        254 => "Chargeable",
         _ => return None,
     })
 }
 
 fn normalize_attribute(mut attribute: u8, version: u16) -> u8 {
     if version >= 1000 {
-        if attribute == 16 { return 253; }
-        if attribute > 16 { attribute = attribute.saturating_sub(1); }
+        if attribute == 16 {
+            return 253;
+        }
+        if attribute > 16 {
+            attribute = attribute.saturating_sub(1);
+        }
     } else if version >= 860 {
         // 8.60–9.86 is the canonical attribute layout.
     } else if version >= 780 {
-        if attribute == 8 { return 254; }
-        if attribute > 8 { attribute = attribute.saturating_sub(1); }
+        if attribute == 8 {
+            return 254;
+        }
+        if attribute > 8 {
+            attribute = attribute.saturating_sub(1);
+        }
     } else if version >= 755 {
-        if attribute == 23 { return 252; }
+        if attribute == 23 {
+            return 252;
+        }
     } else if version >= 740 {
         attribute = match attribute {
-            1..=15 => attribute.saturating_add(1), 16 => 21, 17 => 252, 18 => 30,
-            19 => 25, 20 => 24, 22 => 28, 23 => 20, 24 => 26, 25 => 17,
-            26 => 18, 27 => 19, 28 => 27, other => other,
+            1..=15 => attribute.saturating_add(1),
+            16 => 21,
+            17 => 252,
+            18 => 30,
+            19 => 25,
+            20 => 24,
+            22 => 28,
+            23 => 20,
+            24 => 26,
+            25 => 17,
+            26 => 18,
+            27 => 19,
+            28 => 27,
+            other => other,
         };
-        if attribute == 7 { return 6; }
-        if attribute == 6 { return 7; }
+        if attribute == 7 {
+            return 6;
+        }
+        if attribute == 6 {
+            return 7;
+        }
     }
     attribute
 }
