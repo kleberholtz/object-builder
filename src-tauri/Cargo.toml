@@ -1,6 +1,6 @@
 [package]
 name = "object-builder"
-version = "0.5.2"
+version = "0.5.3"
 description = "Opens, edits and saves OTClient DAT/SPR clients: browse objects, manage sprites, tune animations and write the files back"
 authors = ["Kleber Holtz"]
 edition = "2021"
