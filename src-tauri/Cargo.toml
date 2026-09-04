@@ -1,8 +1,8 @@
 [package]
 name = "object-builder"
-version = "0.2.9"
-description = "A Tauri App"
-authors = ["you"]
+version = "0.3.0"
+description = "Opens, edits and saves OTClient DAT/SPR clients: browse objects, manage sprites, tune animations and write the files back"
+authors = ["Kleber Holtz"]
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
