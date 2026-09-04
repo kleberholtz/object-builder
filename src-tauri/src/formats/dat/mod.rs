@@ -3,8 +3,8 @@ use crate::{
         error::{ObjectBuilderError, Result},
         models::{
             Animation, AnimationMode, Attribute, ClientFeatures, ClientVersion, Dimensions,
-            FormatMetadata, Frame, FrameGroup, Gameplay, ObjectCounts, ObjectDatabase, ObjectKind,
-            Position, ThingObject,
+            FormatMetadata, Frame, FrameGroup, FrameLayout, Gameplay, ObjectCounts, ObjectDatabase,
+            ObjectKind, Position, ThingObject,
         },
     },
     formats::ObjectFormat,
@@ -324,10 +324,9 @@ impl DatFormat {
             }
             let frames = (0..usize::from(phases))
                 .map(|phase| Frame {
-                    id: (u64::from(kind_code(kind)) << 56)
-                        | (u64::from(id) << 16)
-                        | (u64::from(group_index) << 8)
-                        | phase as u64,
+                    // DAT object IDs are 16-bit. This layout keeps the complete frame ID
+                    // below JavaScript's MAX_SAFE_INTEGER while preserving group/phase identity.
+                    id: (u64::from(id) << 32) | (u64::from(group_index) << 16) | phase as u64,
                     sprite_id: sprite_ids[phase * stride],
                     duration: durations[phase],
                 })
@@ -338,6 +337,15 @@ impl DatFormat {
                 looped,
                 frames,
                 sprite_ids,
+                layout: FrameLayout {
+                    group_type,
+                    width,
+                    height,
+                    layers,
+                    pattern_x,
+                    pattern_y,
+                    pattern_z,
+                },
             });
         }
         let sprite_id = frame_groups
@@ -361,6 +369,244 @@ impl DatFormat {
             raw_record: Vec::new(),
         })
     }
+
+    pub fn serialize(&self, database: &ObjectDatabase) -> Result<Vec<u8>> {
+        if let Some(object) = database
+            .objects
+            .iter()
+            .find(|object| object.kind == ObjectKind::Unknown)
+        {
+            return Err(ObjectBuilderError::SerializationError(format!(
+                "Unknown object {} cannot be represented in DAT; export JSON or OBD instead",
+                object.id
+            )));
+        }
+        let mut output = Vec::new();
+        output.extend_from_slice(
+            &database
+                .metadata
+                .dat_signature
+                .unwrap_or_default()
+                .to_le_bytes(),
+        );
+        let groups = [
+            (ObjectKind::Item, 100_u32),
+            (ObjectKind::Outfit, 1),
+            (ObjectKind::Effect, 1),
+            (ObjectKind::Missile, 1),
+        ];
+        let mut ordered = Vec::new();
+        let mut counts = Vec::with_capacity(groups.len());
+        for (kind, first_id) in groups {
+            let mut objects = database
+                .objects
+                .iter()
+                .filter(|object| object.kind == kind)
+                .collect::<Vec<_>>();
+            objects.sort_by_key(|object| object.id);
+            for (index, object) in objects.iter().enumerate() {
+                let expected = first_id.saturating_add(index as u32);
+                if object.id != expected {
+                    return Err(ObjectBuilderError::SerializationError(format!(
+                        "{kind:?} IDs must be contiguous from {first_id}; expected {expected}, found {}",
+                        object.id
+                    )));
+                }
+            }
+            let last_id = objects.last().map(|object| object.id).unwrap_or_else(|| {
+                if kind == ObjectKind::Item {
+                    99
+                } else {
+                    0
+                }
+            });
+            counts.push(u16::try_from(last_id).map_err(|_| {
+                ObjectBuilderError::SerializationError(format!(
+                    "{kind:?} ID {last_id} exceeds the DAT 16-bit object-count field"
+                ))
+            })?);
+            ordered.extend(objects);
+        }
+        if counts[0] < 100 {
+            return Err(ObjectBuilderError::SerializationError(
+                "DAT requires at least item ID 100".into(),
+            ));
+        }
+        for count in counts {
+            output.extend_from_slice(&count.to_le_bytes());
+        }
+        for object in ordered {
+            if !object.modified && !object.raw_record.is_empty() {
+                output.extend_from_slice(&object.raw_record);
+            } else {
+                self.serialize_thing(object, &mut output)?;
+            }
+        }
+        Ok(output)
+    }
+
+    fn serialize_thing(&self, object: &ThingObject, output: &mut Vec<u8>) -> Result<()> {
+        let mut attributes = object
+            .flags
+            .iter()
+            .filter(|(name, enabled)| **enabled && name.as_str() != "Moveable")
+            .map(|(name, _)| {
+                canonical_attribute(name).ok_or_else(|| {
+                    ObjectBuilderError::SerializationError(format!(
+                        "cannot encode unknown DAT flag '{name}' in {:?} {}",
+                        object.kind, object.id
+                    ))
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        attributes.sort_unstable();
+        attributes.dedup();
+        for attribute in attributes {
+            let raw =
+                denormalize_attribute(attribute, self.version.numeric()).ok_or_else(|| {
+                    ObjectBuilderError::SerializationError(format!(
+                        "DAT version {} cannot encode attribute {} in {:?} {}",
+                        self.version.label(),
+                        attribute_name(attribute).unwrap_or("unknown"),
+                        object.kind,
+                        object.id
+                    ))
+                })?;
+            output.push(raw);
+            encode_attribute_payload(attribute, object, output)?;
+        }
+        output.push(255);
+
+        let has_groups = object.kind == ObjectKind::Outfit && self.features.frame_groups;
+        if !has_groups && object.frame_groups.len() != 1 {
+            return Err(ObjectBuilderError::SerializationError(format!(
+                "DAT version {} supports one frame group for {:?} {}",
+                self.version.label(),
+                object.kind,
+                object.id
+            )));
+        }
+        if has_groups {
+            output.push(u8::try_from(object.frame_groups.len()).map_err(|_| {
+                ObjectBuilderError::SerializationError("frame-group count exceeds 255".into())
+            })?);
+        }
+        for (group_index, group) in object.frame_groups.iter().enumerate() {
+            if has_groups {
+                output.push(if group.layout.width == 0 {
+                    u8::try_from(group_index).unwrap_or(u8::MAX)
+                } else {
+                    group.layout.group_type
+                });
+            }
+            let layout = if group.layout.width == 0 {
+                FrameLayout {
+                    group_type: u8::try_from(group_index).unwrap_or(u8::MAX),
+                    width: object.dimensions.width,
+                    height: object.dimensions.height,
+                    layers: object.dimensions.layers,
+                    pattern_x: object.dimensions.patterns,
+                    pattern_y: 1,
+                    pattern_z: 1,
+                }
+            } else {
+                group.layout
+            };
+            for (label, value) in [
+                ("width", layout.width),
+                ("height", layout.height),
+                ("layers", layout.layers),
+                ("pattern X", layout.pattern_x),
+                ("pattern Y", layout.pattern_y),
+                ("pattern Z", layout.pattern_z),
+            ] {
+                if value == 0 {
+                    return Err(ObjectBuilderError::SerializationError(format!(
+                        "{label} is zero in {:?} {} group {}",
+                        object.kind,
+                        object.id,
+                        group_index + 1
+                    )));
+                }
+            }
+            output.extend([layout.width, layout.height]);
+            if layout.width > 1 || layout.height > 1 {
+                output.push(
+                    u8::try_from(
+                        u16::from(layout.width.max(layout.height))
+                            .saturating_mul(self.features.sprite_size),
+                    )
+                    .unwrap_or(u8::MAX),
+                );
+            }
+            output.extend([layout.layers, layout.pattern_x, layout.pattern_y]);
+            if self.version.numeric() >= 755 {
+                output.push(layout.pattern_z);
+            } else if layout.pattern_z != 1 {
+                return Err(ObjectBuilderError::SerializationError(format!(
+                    "DAT version {} cannot encode pattern Z {}",
+                    self.version.label(),
+                    layout.pattern_z
+                )));
+            }
+            let phases = u8::try_from(group.frames.len()).map_err(|_| {
+                ObjectBuilderError::SerializationError("frame count exceeds 255".into())
+            })?;
+            if phases == 0 {
+                return Err(ObjectBuilderError::SerializationError(
+                    "frame groups cannot be empty".into(),
+                ));
+            }
+            output.push(phases);
+            if phases > 1 && self.features.frame_durations {
+                output.push(match object.animation.mode {
+                    AnimationMode::Asynchronous | AnimationMode::Random => 0,
+                    AnimationMode::Synchronous => 1,
+                });
+                output.extend_from_slice(&(if group.looped { 0_i32 } else { 1 }).to_le_bytes());
+                output.push((-1_i8) as u8);
+                for frame in &group.frames {
+                    output.extend_from_slice(&frame.duration.to_le_bytes());
+                    output.extend_from_slice(&frame.duration.to_le_bytes());
+                }
+            }
+            let expected = usize::from(layout.width)
+                .checked_mul(usize::from(layout.height))
+                .and_then(|value| value.checked_mul(usize::from(layout.layers)))
+                .and_then(|value| value.checked_mul(usize::from(layout.pattern_x)))
+                .and_then(|value| value.checked_mul(usize::from(layout.pattern_y)))
+                .and_then(|value| value.checked_mul(usize::from(layout.pattern_z)))
+                .and_then(|value| value.checked_mul(usize::from(phases)))
+                .ok_or_else(|| {
+                    ObjectBuilderError::SerializationError("sprite layout overflow".into())
+                })?;
+            if group.sprite_ids.len() != expected {
+                return Err(ObjectBuilderError::SerializationError(format!(
+                    "sprite layout in {:?} {} group {} has {} IDs; expected {expected}",
+                    object.kind,
+                    object.id,
+                    group_index + 1,
+                    group.sprite_ids.len()
+                )));
+            }
+            for sprite_id in &group.sprite_ids {
+                if self.features.extended {
+                    output.extend_from_slice(&sprite_id.to_le_bytes());
+                } else {
+                    output.extend_from_slice(
+                        &u16::try_from(*sprite_id)
+                            .map_err(|_| {
+                                ObjectBuilderError::SerializationError(format!(
+                                    "sprite ID {sprite_id} requires an extended DAT"
+                                ))
+                            })?
+                            .to_le_bytes(),
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
 }
 
 impl ObjectFormat for DatFormat {
@@ -368,25 +614,75 @@ impl ObjectFormat for DatFormat {
         self.parse(fs::read(path)?)
     }
     fn save(&self, database: &ObjectDatabase, path: &Path) -> Result<()> {
-        let original = database.original_dat.as_ref().ok_or_else(|| {
-            ObjectBuilderError::SerializationError(
-                "DAT serialization is unavailable without preserved source bytes".into(),
-            )
-        })?;
-        fs::write(path, original)?;
+        fs::write(path, self.serialize(database)?)?;
         Ok(())
     }
 }
 
-fn kind_code(kind: ObjectKind) -> u8 {
-    match kind {
-        ObjectKind::Item => 0,
-        ObjectKind::Outfit => 1,
-        ObjectKind::Effect => 2,
-        ObjectKind::Missile => 3,
-        ObjectKind::Unknown => 4,
-    }
+fn canonical_attribute(name: &str) -> Option<u8> {
+    (0..=254).find(|attribute| attribute_name(*attribute) == Some(name))
 }
+
+fn denormalize_attribute(attribute: u8, version: u16) -> Option<u8> {
+    (0..=254).find(|raw| normalize_attribute(*raw, version) == attribute)
+}
+
+fn attribute_number(object: &ThingObject, key: &str) -> u16 {
+    object
+        .attributes
+        .iter()
+        .find(|attribute| attribute.key == key)
+        .and_then(|attribute| attribute.value.parse().ok())
+        .unwrap_or_default()
+}
+
+fn encode_attribute_payload(
+    attribute: u8,
+    object: &ThingObject,
+    output: &mut Vec<u8>,
+) -> Result<()> {
+    match attribute {
+        0 => output.extend_from_slice(&object.gameplay.ground_speed.to_le_bytes()),
+        8 | 9 | 29 | 32 | 34 => output.extend_from_slice(
+            &attribute_number(object, attribute_name(attribute).unwrap_or_default()).to_le_bytes(),
+        ),
+        21 => {
+            output.extend_from_slice(&u16::from(object.gameplay.light_level).to_le_bytes());
+            output.extend_from_slice(&object.gameplay.light_color.to_le_bytes());
+        }
+        24 => {
+            output.extend_from_slice(&(object.position.x as u16).to_le_bytes());
+            output.extend_from_slice(&(object.position.y as u16).to_le_bytes());
+        }
+        25 => output.extend_from_slice(&u16::from(object.position.elevation).to_le_bytes()),
+        28 => output.extend_from_slice(&object.gameplay.minimap_color.to_le_bytes()),
+        33 => {
+            for key in ["marketCategory", "marketTradeAs", "marketShowAs"] {
+                output.extend_from_slice(&attribute_number(object, key).to_le_bytes());
+            }
+            let name = object
+                .attributes
+                .iter()
+                .find(|value| value.key == "marketName")
+                .map(|value| value.value.as_bytes())
+                .unwrap_or_default();
+            output.extend_from_slice(
+                &u16::try_from(name.len())
+                    .map_err(|_| {
+                        ObjectBuilderError::SerializationError("market name is too long".into())
+                    })?
+                    .to_le_bytes(),
+            );
+            output.extend_from_slice(name);
+            for key in ["marketProfession", "marketLevel"] {
+                output.extend_from_slice(&attribute_number(object, key).to_le_bytes());
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 fn kind_label(kind: ObjectKind) -> &'static str {
     match kind {
         ObjectKind::Item => "Item",
@@ -525,6 +821,39 @@ mod tests {
         .is_err());
     }
     #[test]
+    fn serializes_modified_objects_with_versioned_attributes() {
+        let version = ClientVersion::Custom(1098);
+        let features = ClientFeatures {
+            extended: true,
+            ..ClientFeatures::for_version(version)
+        };
+        let mut object = crate::core::models::test_object();
+        object.modified = true;
+        object.flags.insert("Light".into(), true);
+        object.gameplay.light_level = 7;
+        object.gameplay.light_color = 215;
+        let database = ObjectDatabase {
+            version,
+            objects: vec![object],
+            metadata: FormatMetadata {
+                dat_signature: Some(0x4a10),
+                ..FormatMetadata::default()
+            },
+            ..ObjectDatabase::default()
+        };
+        let format = DatFormat { version, features };
+        let reparsed = format
+            .parse(format.serialize(&database).expect("serialize modified DAT"))
+            .expect("reparse modified DAT");
+        assert_eq!(reparsed.objects[0].gameplay.light_level, 7);
+        assert_eq!(reparsed.objects[0].gameplay.light_color, 215);
+        assert!(reparsed.objects[0]
+            .flags
+            .get("Light")
+            .copied()
+            .unwrap_or_default());
+    }
+    #[test]
     fn parses_real_extended_860_fixture_when_available() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../860/Tibia.dat");
         if !path.exists() {
@@ -547,5 +876,20 @@ mod tests {
         assert_eq!(parsed.metadata.counts.items, 44_522);
         assert_eq!(parsed.objects.len(), 46_524);
         assert_eq!(parsed.objects[0].sprite_id, 453_694);
+        assert!(parsed
+            .objects
+            .iter()
+            .flat_map(|object| &object.frame_groups)
+            .flat_map(|group| &group.frames)
+            .all(|frame| frame.id <= 9_007_199_254_740_991));
+        assert_eq!(
+            DatFormat {
+                version: ClientVersion::Tibia860,
+                features
+            }
+            .serialize(&parsed)
+            .expect("real DAT should serialize losslessly"),
+            fs::read(path).expect("fixture bytes")
+        );
     }
 }
