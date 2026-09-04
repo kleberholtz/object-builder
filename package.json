@@ -1,7 +1,7 @@
 {
   "name": "object-builder",
   "private": true,
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Native OTClient object and sprite editor",
   "license": "MIT",
   "repository": "https://github.com/kleberholtz/object-builder",
