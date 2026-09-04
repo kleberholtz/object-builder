@@ -82,6 +82,8 @@ const PAINT_TOOL_SHORTCUTS: Record<string, PaintTool> = {
 
 function App() {
   const t = useT();
+  const sprSplitSize = useSettingsStore((state) => state.sprSplitSize);
+  const setSprSplitSize = useSettingsStore((state) => state.setSprSplitSize);
   const [notice, setNotice] = useState<string | null>(null);
   const [manifestPath, setManifestPath] = useState<string | null>(null);
   const [clientOpen, setClientOpen] = useState(false);
@@ -91,6 +93,10 @@ function App() {
   const [aboutOpen, setAboutOpen] = useState(false);
   const [saveProgress, setSaveProgress] = useState<SaveProgress | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // The format and volume size of the running save, so the progress dialog draws the stages
+  // that this save will actually emit instead of guessing them from the status text.
+  const [saveFormat, setSaveFormat] = useState<SaveAsFormat | null>(null);
+  const [saveSplitSize, setSaveSplitSize] = useState(0);
   const [saveAsOpen, setSaveAsOpen] = useState(false);
   const [exportObjectOpen, setExportObjectOpen] = useState(false);
   const [spriteManagerOpen, setSpriteManagerOpen] = useState(false);
@@ -174,6 +180,9 @@ function App() {
       }
       const hasClientPair = Boolean(project?.sourceDirectory && project.datFile && project.sprFile);
       const format: SaveAsFormat = requestedFormat ?? (hasClientPair ? "client" : "json");
+      // Megabytes in the preference, bytes in the command: the splitter counts bytes.
+      const splitMegabytes = format === "client" ? useSettingsStore.getState().sprSplitSize : 0;
+      const splitSize = splitMegabytes > 0 ? splitMegabytes * 1024 * 1024 : null;
       if (format === "client" && (objectOrderDraft || Object.keys(frameOrderDrafts).length > 0)) {
         notify("Apply the pending object/frame order before saving DAT/SPR");
         return false;
@@ -210,14 +219,21 @@ function App() {
       const channel = new Channel<SaveProgress>();
       channel.onmessage = setSaveProgress;
       setSaveError(null);
+      setSaveFormat(format);
+      setSaveSplitSize(splitMegabytes);
       setSaveProgress({
         stage: "preparing",
-        status: t("Preparing changes"),
+        status: "Collecting workspace changes",
+        detail: null,
         percent: 0,
         objectsProcessed: 0,
         objectsTotal: project?.objectCount ?? 0,
         spritesProcessed: 0,
         spritesTotal: 0,
+        bytesWritten: 0,
+        bytesTotal: 0,
+        volumes: 0,
+        elapsedMs: 0,
         complete: false,
       });
       try {
@@ -226,6 +242,7 @@ function App() {
           const saved = await invoke<ProjectInfo>("save_client_files", {
             path,
             createBackup: true,
+            splitSize,
             onProgress: channel,
           });
           setObjects(
@@ -1082,6 +1099,8 @@ function App() {
         <SaveProgressDialog
           progress={saveProgress}
           error={saveError}
+          format={saveFormat}
+          splitSize={saveSplitSize}
           onClose={() => {
             setSaveProgress(null);
             setSaveError(null);
@@ -1091,6 +1110,8 @@ function App() {
           open={saveAsOpen}
           onOpenChange={setSaveAsOpen}
           canSaveClient={Boolean(project.sourceDirectory && project.datFile && project.sprFile)}
+          splitSize={sprSplitSize}
+          onSplitSizeChange={setSprSplitSize}
           onSelect={(format) => {
             setSaveAsOpen(false);
             void save(format);
