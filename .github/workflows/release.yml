@@ -56,13 +56,25 @@ jobs:
             # platforms that did upload keep their assets.
             echo "::notice::Reusing the existing draft for $TAG."
           else
-            gh release create "$TAG" \
-              --draft \
-              --target "$GITHUB_SHA" \
-              --title "Object Builder $VERSION" \
-              --notes "Stable release $VERSION, built from $GITHUB_SHA."
-            id=$(gh api "repos/$GITHUB_REPOSITORY/releases" --paginate \
-              --jq ".[] | select(.tag_name == \"$TAG\") | .id" | awk 'NR == 1')
+            # The id comes out of the creation response, not out of a second
+            # listing: re-reading the list right after the write can come back
+            # without the release that was just made, and the empty id that
+            # leaves behind is what turns the publish step into a PATCH on
+            # `repos/<repo>/releases/` — a 404.
+            id=$(gh api --method POST "repos/$GITHUB_REPOSITORY/releases" \
+              -f tag_name="$TAG" \
+              -f target_commitish="$GITHUB_SHA" \
+              -f name="Object Builder $VERSION" \
+              -f body="Stable release $VERSION, built from $GITHUB_SHA." \
+              -F draft=true \
+              --jq .id)
+          fi
+
+          # Fail here rather than three jobs later: a build that uploads to no
+          # release at all is the same wasted half hour, minus the reason.
+          if [ -z "$id" ]; then
+            echo "::error::Could not resolve a release id for $TAG."
+            exit 1
           fi
 
           echo "skip=false" >> "$GITHUB_OUTPUT"
@@ -75,7 +87,12 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: ubuntu-22.04
+          # Debian 13 num container, e não a imagem de um runner hospedado: o
+          # que o binário de Linux exige do sistema (glibc, webkit2gtk) passa a
+          # ser uma linha versionada aqui, em vez de mudar no dia em que a
+          # GitHub troca o Ubuntu por baixo do runner.
+          - platform: ubuntu-latest
+            container: debian:13
             target: x86_64-unknown-linux-gnu
             args: ""
           - platform: windows-latest
@@ -89,30 +106,70 @@ jobs:
             args: "--target x86_64-apple-darwin"
 
     runs-on: ${{ matrix.platform }}
+    container: ${{ matrix.container }}
     steps:
-      - uses: actions/checkout@v5
-
-      # webkit2gtk 4.1 is the Tauri v2 line, and 22.04 is the oldest runner that
-      # carries it — building there is what keeps the AppImage's glibc floor low.
-      - name: Install Linux dependencies
-        if: matrix.platform == 'ubuntu-22.04'
+      # A imagem base não traz nada do que uma imagem de runner traz pronto, e
+      # isso inclui o que as próprias actions usam: git para o checkout, tar e
+      # zstd para os caches, curl e certificados para os downloads do toolchain.
+      # Roda antes do checkout porque é o checkout o primeiro a precisar.
+      - name: Install Debian dependencies
+        if: matrix.container
         run: |
-          sudo apt-get update
-          sudo apt-get install -y \
+          apt-get update
+          apt-get install -y --no-install-recommends \
+            ca-certificates \
+            curl \
+            wget \
+            git \
+            tar \
+            xz-utils \
+            zstd \
+            build-essential \
+            pkg-config \
+            file \
+            patchelf \
+            desktop-file-utils \
+            libssl-dev \
+            libgtk-3-dev \
             libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
             librsvg2-dev \
             libxdo-dev \
-            libssl-dev \
-            patchelf \
-            build-essential \
-            file \
-            wget
+            libayatana-appindicator3-dev
+          rm -rf /var/lib/apt/lists/*
+
+      - uses: actions/checkout@v5
 
       - uses: actions/setup-node@v5
         with:
           node-version: lts/*
-          cache: npm
+
+      # `cache: npm` do setup-node usa o hash do package-lock.json e **não** tem
+      # chave de fallback. Como todo commit sobe a versão, e a versão está
+      # escrita dentro do lock, a chave mudava em todo push: a árvore inteira de
+      # dependências era rebaixada de novo a cada release. Neutralizar a versão
+      # deixa o que sobra ser o que o cache de fato depende — as dependências —,
+      # e o restore-keys cobre a mudança que for real, aproveitando a árvore
+      # anterior em vez de partir do zero.
+      #
+      # O Cargo não precisa do mesmo tratamento: o rust-cache já reescreve a
+      # versão do pacote para 0.0.0 e descarta as crates do workspace antes de
+      # hashear o Cargo.lock.
+      - id: npm
+        name: Fingerprint the npm dependency set
+        shell: bash
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          escaped=${VERSION//./\\.}
+          sed "s/\"version\": \"$escaped\"/\"version\": \"0.0.0\"/g" \
+            package-lock.json > .npm-lock-fingerprint
+          echo "dir=$(npm config get cache | tr -d '\r')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/cache@v4
+        with:
+          path: ${{ steps.npm.outputs.dir }}
+          key: npm-${{ runner.os }}-${{ hashFiles('.npm-lock-fingerprint') }}
+          restore-keys: npm-${{ runner.os }}-
 
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -121,13 +178,19 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
-          key: ${{ matrix.target }}
+          # A imagem base faz parte do que os artefatos foram compilados contra,
+          # então entra na chave: um target/ produzido no runner Ubuntu não deve
+          # ser entregue ao container Debian.
+          key: ${{ matrix.target }}-${{ matrix.container && 'debian13' || 'hosted' }}
 
       - run: npm ci
 
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Não há FUSE dentro do container, e o linuxdeploy é ele próprio um
+          # AppImage: sem isto ele não consegue nem se montar para rodar.
+          APPIMAGE_EXTRACT_AND_RUN: 1
         with:
           releaseId: ${{ needs.prepare.outputs.release_id }}
           includeUpdaterJson: false
@@ -142,4 +205,12 @@ jobs:
     steps:
       - env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/${{ needs.prepare.outputs.release_id }}" -F draft=false -f make_latest=true
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: |
+          if [ -z "$RELEASE_ID" ]; then
+            echo "::error::prepare produced no release id; nothing to publish."
+            exit 1
+          fi
+
+          gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" \
+            -F draft=false -f make_latest=true
