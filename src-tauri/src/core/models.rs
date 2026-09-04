@@ -29,8 +29,12 @@ impl ClientVersion {
 
     pub fn numeric(self) -> u16 {
         match self {
-            Self::Tibia710 => 710, Self::Tibia760 => 760, Self::Tibia860 => 860,
-            Self::Tibia1098 => 1098, Self::Tibia1200 => 1200, Self::Tibia1310 => 1310,
+            Self::Tibia710 => 710,
+            Self::Tibia760 => 760,
+            Self::Tibia860 => 860,
+            Self::Tibia1098 => 1098,
+            Self::Tibia1200 => 1200,
+            Self::Tibia1310 => 1310,
             Self::Custom(version) => version,
         }
     }
@@ -74,7 +78,7 @@ impl ClientFeatures {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ObjectKind {
     Item,
     Outfit,
@@ -203,10 +207,58 @@ pub struct ProjectInfo {
     pub object_count: usize,
     pub sprite_count: u32,
     pub dirty: bool,
+    pub project_file: Option<String>,
+    pub sprite_size: u16,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkspaceSnapshot {
     pub project: ProjectInfo,
     pub objects: Vec<ThingObject>,
+}
+
+#[cfg(test)]
+pub fn test_object() -> ThingObject {
+    ThingObject {
+        id: 100,
+        name: "Test item".into(),
+        kind: ObjectKind::Item,
+        sprite_id: 1,
+        modified: false,
+        dimensions: Dimensions {
+            width: 1,
+            height: 1,
+            layers: 1,
+            patterns: 1,
+        },
+        position: Position {
+            x: 0,
+            y: 0,
+            elevation: 0,
+        },
+        animation: Animation {
+            mode: AnimationMode::Asynchronous,
+            looped: true,
+        },
+        gameplay: Gameplay {
+            ground_speed: 0,
+            light_level: 0,
+            light_color: 0,
+            minimap_color: 0,
+        },
+        flags: BTreeMap::new(),
+        attributes: Vec::new(),
+        frame_groups: vec![FrameGroup {
+            id: "item-100-0".into(),
+            name: "Default".into(),
+            looped: true,
+            frames: vec![Frame {
+                id: 1,
+                sprite_id: 1,
+                duration: 100,
+            }],
+            sprite_ids: vec![1],
+        }],
+        raw_record: Vec::new(),
+    }
 }
