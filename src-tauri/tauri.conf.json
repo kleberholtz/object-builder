@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "object-builder",
+  "productName": "Object Builder",
   "version": "0.1.0",
   "identifier": "com.holtz.object-builder",
   "build": {
@@ -12,9 +12,13 @@
   "app": {
     "windows": [
       {
-        "title": "object-builder",
-        "width": 800,
-        "height": 600
+        "title": "Object Builder",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 880,
+        "minHeight": 620,
+        "center": true,
+        "decorations": false
       }
     ],
     "security": {
