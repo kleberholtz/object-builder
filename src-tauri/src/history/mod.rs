@@ -33,6 +33,11 @@ impl EditorHistory {
         self.future.clear();
     }
 
+    pub fn clear(&mut self) {
+        self.past.clear();
+        self.future.clear();
+    }
+
     pub fn undo(&mut self, database: &mut ObjectDatabase) -> Result<()> {
         let change = self
             .past
