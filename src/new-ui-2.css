@@ -1468,6 +1468,17 @@ body {
 .launcher-window-bar > .window-controls {
   height: 32px;
 }
+.launcher-window-brand {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.launcher-window-brand img {
+  width: 20px;
+  height: 20px;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 5px rgb(211 39 255 / 24%));
+}
 .pagination {
   min-height: 68px;
   display: grid;

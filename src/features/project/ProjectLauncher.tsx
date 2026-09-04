@@ -2,7 +2,6 @@ import { Channel, invoke } from "@tauri-apps/api/core";
 import { open } from "@tauri-apps/plugin-dialog";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  Boxes,
   CircleCheck,
   Clock3,
   FolderOpen,
@@ -716,7 +715,10 @@ export function ProjectLauncher({ initialOpenClient = false }: { initialOpenClie
   return (
     <main className="launcher">
       <header className="launcher-window-bar" data-tauri-drag-region>
-        <span data-tauri-drag-region>Object Builder</span>
+        <span className="launcher-window-brand" data-tauri-drag-region>
+          <img src="/object-builder-logo.png" alt="" data-tauri-drag-region />
+          <span data-tauri-drag-region>Object Builder</span>
+        </span>
         <div className="window-controls">
           <button aria-label={t("Minimize window")} onClick={() => windowAction("minimize")}>
             ─
@@ -737,9 +739,7 @@ export function ProjectLauncher({ initialOpenClient = false }: { initialOpenClie
         </div>
       </header>
       <div className="launcher-brand">
-        <span className="launcher-logo">
-          <Boxes size={29} />
-        </span>
+        <img className="launcher-logo" src="/object-builder-logo.png" alt="" />
         <h1>Object Builder</h1>
         <p>{t("Native OTClient object and sprite editor")}</p>
       </div>

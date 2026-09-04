@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="public/object-builder-logo.png" alt="Object Builder" width="160" />
+</p>
+
 # Object Builder
 
 Native, dark-first OTClient object editor built with Rust, Tauri, React, Tailwind CSS and shadcn-style Radix primitives.

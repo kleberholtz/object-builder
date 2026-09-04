@@ -1,4 +1,4 @@
-import { Boxes, Circle } from "lucide-react";
+import { Circle } from "lucide-react";
 import { AppMenu, MenuItem, MenuSeparator, MenuSub } from "../ui/menu";
 import { useEffect, useState } from "react";
 import { useProjectStore } from "../../stores/project-store";
@@ -70,7 +70,12 @@ export function MenuBar({
   return (
     <header className="menu-bar" data-tauri-drag-region>
       <div className="brand-mark" data-tauri-drag-region>
-        <Boxes size={15} strokeWidth={1.8} />
+        <img
+          className="brand-logo"
+          src="/object-builder-logo.png"
+          alt=""
+          data-tauri-drag-region
+        />
         <span data-tauri-drag-region>Object Builder</span>
       </div>
       <nav className="menu-items" aria-label={t("Application menu")}>

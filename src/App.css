@@ -82,8 +82,12 @@ button {
   font-weight: 650;
   border-right: 1px solid var(--c-292e34);
 }
-.brand-mark svg {
-  color: var(--c-c86d46);
+.brand-logo {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  object-fit: contain;
+  filter: drop-shadow(0 2px 5px rgb(211 39 255 / 28%));
 }
 .menu-items {
   display: flex;

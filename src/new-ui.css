@@ -129,16 +129,11 @@
   text-align: center;
 }
 .launcher-logo {
-  width: 58px;
-  height: 58px;
-  display: grid;
-  place-items: center;
-  margin-bottom: 14px;
-  border: 1px solid var(--c-70432f);
-  border-radius: 13px;
-  color: var(--c-d67b52);
-  background: linear-gradient(145deg, var(--c-32231d), var(--c-1b1b1b));
-  box-shadow: 0 15px 45px var(--sh-000000aa);
+  width: 82px;
+  height: 82px;
+  object-fit: contain;
+  margin-bottom: 8px;
+  filter: drop-shadow(0 12px 22px rgb(193 38 255 / 28%));
 }
 .launcher h1 {
   margin: 0;
@@ -494,16 +489,10 @@
   text-align: center;
 }
 .about-logo {
-  width: 54px;
-  height: 54px;
-  display: grid;
-  place-items: center;
-  border: 1px solid var(--c-82492f);
-  border-radius: 12px;
-  background: var(--c-30221c);
-  color: var(--c-db7b51);
-  font-size: 15px;
-  font-weight: 750;
+  width: 72px;
+  height: 72px;
+  object-fit: contain;
+  filter: drop-shadow(0 9px 18px rgb(222 34 255 / 24%));
 }
 .about-body h2 {
   margin: 12px 0 3px;

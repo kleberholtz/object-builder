@@ -661,7 +661,7 @@ export function AboutDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent title={t("About Object Builder")} className="about-dialog">
         <div className="about-body">
-          <div className="about-logo">OB</div>
+          <img className="about-logo" src="/object-builder-logo.png" alt="" />
           <h2>{APP_INFO.name}</h2>
           <p>{APP_INFO.tagline}</p>
           <strong>{t("Version {version}", { version: APP_INFO.version })}</strong>
