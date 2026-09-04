@@ -684,7 +684,11 @@ export function AboutDialog({
             </div>
             <div>
               <dt>{t("License")}</dt>
-              <dd>{APP_INFO.license}</dd>
+              <dd>
+                <a href={APP_INFO.licenseUrl} target="_blank" rel="noreferrer">
+                  {APP_INFO.license} <ExternalLink size={12} />
+                </a>
+              </dd>
             </div>
           </dl>
           <div className="about-links">
@@ -695,7 +699,7 @@ export function AboutDialog({
               {t("Documentation")} <ExternalLink size={12} />
             </a>
           </div>
-          <small>{t("© 2026 Object Builder contributors")}</small>
+          <small>{t("© 2026 Eibly · Released under the MIT License")}</small>
         </div>
       </DialogContent>
     </Dialog>
