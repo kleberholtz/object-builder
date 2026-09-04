@@ -1,4 +1,8 @@
-use crate::core::{dimensions::object_dimensions, error::{ObjectBuilderError, Result}, models::ThingObject};
+use crate::core::{
+    dimensions::frame_group_dimensions,
+    error::{ObjectBuilderError, Result},
+    models::{ObjectKind, ThingObject},
+};
 use crate::formats::spr::SprHeader;
 use image::{ImageFormat, ImageReader};
 use serde::{Deserialize, Serialize};
@@ -12,6 +16,29 @@ pub struct SpriteImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+/// Colors applied to the four canonical pixels in an outfit mask. This value is
+/// deliberately accepted only by preview rendering; the underlying sprites stay
+/// untouched and save/export can continue to use `render_object_frame`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OutfitPreviewColors {
+    pub head: [u8; 3],
+    pub body: [u8; 3],
+    pub legs: [u8; 3],
+    pub feet: [u8; 3],
+}
+
+impl Default for OutfitPreviewColors {
+    fn default() -> Self {
+        Self {
+            head: [239, 196, 143],
+            body: [73, 112, 180],
+            legs: [86, 96, 115],
+            feet: [111, 72, 48],
+        }
+    }
 }
 
 pub fn load_png(path: &std::path::Path) -> Result<SpriteImage> {
@@ -90,49 +117,294 @@ pub fn render_object_frame<F>(
     frame_index: usize,
     pattern_index: usize,
     sprite_size: u16,
+    resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    render_object_frame_internal(
+        object,
+        group_index,
+        frame_index,
+        pattern_index,
+        sprite_size,
+        None,
+        resolve,
+    )
+}
+
+pub fn render_object_preview<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    sprite_size: u16,
+    colors: OutfitPreviewColors,
+    resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    render_object_frame_internal(
+        object,
+        group_index,
+        frame_index,
+        pattern_index,
+        sprite_size,
+        Some(colors),
+        resolve,
+    )
+}
+
+pub fn render_outfit_preview_with_base<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    sprite_size: u16,
+    colors: OutfitPreviewColors,
     mut resolve: F,
 ) -> Result<SpriteImage>
 where
     F: FnMut(u32) -> Result<SpriteImage>,
 {
-    let dimensions = object_dimensions(object, sprite_size);
-    let group = object.frame_groups.get(group_index).ok_or_else(|| ObjectBuilderError::InvalidSprite("frame group is outside this object".into()))?;
-    if frame_index >= group.frames.len() { return Err(ObjectBuilderError::InvalidSprite("frame is outside this object".into())); }
+    let direction_count = object
+        .frame_groups
+        .get(group_index)
+        .map(|group| usize::from(group.layout.pattern_x.max(1)))
+        .ok_or_else(|| {
+            ObjectBuilderError::InvalidSprite("frame group is outside this object".into())
+        })?;
+    let base_pattern_index = pattern_index % direction_count;
+    let mut target = render_object_frame_internal(
+        object,
+        group_index,
+        frame_index,
+        base_pattern_index,
+        sprite_size,
+        Some(colors),
+        &mut resolve,
+    )?;
+    if pattern_index != base_pattern_index {
+        let addon = render_object_frame_internal(
+            object,
+            group_index,
+            frame_index,
+            pattern_index,
+            sprite_size,
+            Some(colors),
+            &mut resolve,
+        )?;
+        blend_sprite(&mut target, &addon, 0, 0);
+    }
+    Ok(target)
+}
+
+pub fn render_outfit_preview_with_all_addons<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    direction: usize,
+    sprite_size: u16,
+    colors: OutfitPreviewColors,
+    include_base: bool,
+    mut resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    let group = object.frame_groups.get(group_index).ok_or_else(|| {
+        ObjectBuilderError::InvalidSprite("frame group is outside this object".into())
+    })?;
+    let direction_count = usize::from(group.layout.pattern_x.max(1));
+    let addon_count = usize::from(group.layout.pattern_y.max(1));
+    let direction = direction % direction_count;
+    // Without the body, the composition starts on the first addon row instead of the base one.
+    let first_addon = usize::from(!include_base && addon_count > 1);
+    let mut target = render_object_frame_internal(
+        object,
+        group_index,
+        frame_index,
+        first_addon * direction_count + direction,
+        sprite_size,
+        Some(colors),
+        &mut resolve,
+    )?;
+    for addon in (first_addon + 1)..addon_count {
+        let image = render_object_frame_internal(
+            object,
+            group_index,
+            frame_index,
+            addon * direction_count + direction,
+            sprite_size,
+            Some(colors),
+            &mut resolve,
+        )?;
+        blend_sprite(&mut target, &image, 0, 0);
+    }
+    Ok(target)
+}
+
+fn render_object_frame_internal<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    sprite_size: u16,
+    outfit_colors: Option<OutfitPreviewColors>,
+    mut resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    let group = object.frame_groups.get(group_index).ok_or_else(|| {
+        ObjectBuilderError::InvalidSprite("frame group is outside this object".into())
+    })?;
+    let dimensions = frame_group_dimensions(object, group_index, sprite_size);
+    if frame_index >= group.frames.len() {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "frame is outside this object".into(),
+        ));
+    }
     let tiles = usize::from(dimensions.tile_width) * usize::from(dimensions.tile_height);
     let layers = usize::from(dimensions.layers.max(1));
-    let phase_stride = group.sprite_ids.len().checked_div(group.frames.len().max(1)).unwrap_or(0);
-    let patterns = phase_stride.checked_div(tiles.saturating_mul(layers)).unwrap_or(0);
-    if patterns == 0 || pattern_index >= patterns { return Err(ObjectBuilderError::InvalidSprite("sprite layout is inconsistent with object dimensions".into())); }
+    let phase_stride = group
+        .sprite_ids
+        .len()
+        .checked_div(group.frames.len().max(1))
+        .unwrap_or(0);
+    let patterns = phase_stride
+        .checked_div(tiles.saturating_mul(layers))
+        .unwrap_or(0);
+    if patterns == 0 || pattern_index >= patterns {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "sprite layout is inconsistent with object dimensions".into(),
+        ));
+    }
     let side = u32::from(sprite_size);
-    let mut target = SpriteImage::new(dimensions.pixel_width, dimensions.pixel_height, vec![0; usize::try_from(dimensions.pixel_width.saturating_mul(dimensions.pixel_height).saturating_mul(4)).unwrap_or_default()])?;
+    let mut target = SpriteImage::new(
+        dimensions.pixel_width,
+        dimensions.pixel_height,
+        vec![
+            0;
+            usize::try_from(
+                dimensions
+                    .pixel_width
+                    .saturating_mul(dimensions.pixel_height)
+                    .saturating_mul(4)
+            )
+            .unwrap_or_default()
+        ],
+    )?;
     let base = frame_index * phase_stride + pattern_index * layers * tiles;
+    let colorized_outfit =
+        object.kind == ObjectKind::Outfit && layers >= 2 && outfit_colors.is_some();
     for layer in 0..layers {
+        // Tibia outfits use layer zero as the base and layer one as the four-color
+        // mask. Extra layers are not independent artwork in this layout.
+        if colorized_outfit && layer > 1 {
+            continue;
+        }
         for tile_y in 0..usize::from(dimensions.tile_height) {
             for tile_x in 0..usize::from(dimensions.tile_width) {
-                let sprite_index = base + layer * tiles + tile_y * usize::from(dimensions.tile_width) + tile_x;
-                let sprite_id = *group.sprite_ids.get(sprite_index).ok_or_else(|| ObjectBuilderError::InvalidSprite("sprite layout ends unexpectedly".into()))?;
-                if sprite_id == 0 { continue; }
+                let sprite_index =
+                    base + layer * tiles + tile_y * usize::from(dimensions.tile_width) + tile_x;
+                let sprite_id = *group.sprite_ids.get(sprite_index).ok_or_else(|| {
+                    ObjectBuilderError::InvalidSprite("sprite layout ends unexpectedly".into())
+                })?;
+                if sprite_id == 0 {
+                    continue;
+                }
                 let sprite = resolve(sprite_id)?;
-                if sprite.width != side || sprite.height != side { return Err(ObjectBuilderError::InvalidSprite(format!("sprite {sprite_id} is {}×{}, expected {side}×{side}", sprite.width, sprite.height))); }
+                if sprite.width != side || sprite.height != side {
+                    return Err(ObjectBuilderError::InvalidSprite(format!(
+                        "sprite {sprite_id} is {}×{}, expected {side}×{side}",
+                        sprite.width, sprite.height
+                    )));
+                }
                 let destination_x = (u32::from(dimensions.tile_width) - tile_x as u32 - 1) * side;
                 let destination_y = (u32::from(dimensions.tile_height) - tile_y as u32 - 1) * side;
-                blend_sprite(&mut target, &sprite, destination_x, destination_y);
+                if colorized_outfit && layer == 1 {
+                    apply_outfit_mask(
+                        &mut target,
+                        &sprite,
+                        destination_x,
+                        destination_y,
+                        outfit_colors.expect("colorized outfits always have preview colors"),
+                    );
+                } else {
+                    blend_sprite(&mut target, &sprite, destination_x, destination_y);
+                }
             }
         }
     }
     Ok(target)
 }
 
-fn blend_sprite(target: &mut SpriteImage, source: &SpriteImage, destination_x: u32, destination_y: u32) {
+fn apply_outfit_mask(
+    target: &mut SpriteImage,
+    mask: &SpriteImage,
+    destination_x: u32,
+    destination_y: u32,
+    colors: OutfitPreviewColors,
+) {
+    for y in 0..mask.height {
+        for x in 0..mask.width {
+            let mask_index = usize::try_from((y * mask.width + x) * 4).unwrap_or_default();
+            let alpha = u32::from(mask.rgba[mask_index + 3]);
+            if alpha == 0 {
+                continue;
+            }
+            let color = match (
+                mask.rgba[mask_index],
+                mask.rgba[mask_index + 1],
+                mask.rgba[mask_index + 2],
+            ) {
+                (255, 255, 0) => colors.head,
+                (255, 0, 0) => colors.body,
+                (0, 255, 0) => colors.legs,
+                (0, 0, 255) => colors.feet,
+                _ => continue,
+            };
+            let target_index =
+                usize::try_from(((destination_y + y) * target.width + destination_x + x) * 4)
+                    .unwrap_or_default();
+            let inverse = 255 - alpha;
+            for (channel, tint) in color.iter().enumerate() {
+                let original = u32::from(target.rgba[target_index + channel]);
+                let multiplied = original * u32::from(*tint) / 255;
+                target.rgba[target_index + channel] =
+                    ((multiplied * alpha + original * inverse) / 255) as u8;
+            }
+        }
+    }
+}
+
+fn blend_sprite(
+    target: &mut SpriteImage,
+    source: &SpriteImage,
+    destination_x: u32,
+    destination_y: u32,
+) {
     for y in 0..source.height {
         for x in 0..source.width {
             let source_index = usize::try_from((y * source.width + x) * 4).unwrap_or_default();
-            let target_index = usize::try_from(((destination_y + y) * target.width + destination_x + x) * 4).unwrap_or_default();
+            let target_index =
+                usize::try_from(((destination_y + y) * target.width + destination_x + x) * 4)
+                    .unwrap_or_default();
             let alpha = u32::from(source.rgba[source_index + 3]);
-            if alpha == 0 { continue; }
+            if alpha == 0 {
+                continue;
+            }
             let inverse = 255 - alpha;
-            for channel in 0..3 { target.rgba[target_index + channel] = ((u32::from(source.rgba[source_index + channel]) * alpha + u32::from(target.rgba[target_index + channel]) * inverse) / 255) as u8; }
-            target.rgba[target_index + 3] = (alpha + u32::from(target.rgba[target_index + 3]) * inverse / 255).min(255) as u8;
+            for channel in 0..3 {
+                target.rgba[target_index + channel] =
+                    ((u32::from(source.rgba[source_index + channel]) * alpha
+                        + u32::from(target.rgba[target_index + channel]) * inverse)
+                        / 255) as u8;
+            }
+            target.rgba[target_index + 3] =
+                (alpha + u32::from(target.rgba[target_index + 3]) * inverse / 255).min(255) as u8;
         }
     }
 }
@@ -143,6 +415,50 @@ pub struct SpriteSource {
     pub header: SprHeader,
     pub transparency: bool,
     pub sprite_size: u16,
+}
+
+/// Returns the physical byte span occupied by every sprite block in the SPR.
+/// The offset table is read sequentially and blocks are measured by their next
+/// physical offset, so this does not decode or load sprite pixels.
+pub fn sprite_storage_sizes(source: &SpriteSource) -> Result<Vec<u64>> {
+    let mut file = File::open(&source.path)?;
+    let file_length = file.metadata()?.len();
+    file.seek(SeekFrom::Start(source.header.table_offset as u64))?;
+    let count = usize::try_from(source.header.sprite_count).unwrap_or(usize::MAX);
+    let mut indexed_offsets = Vec::with_capacity(count);
+    let mut bytes = [0_u8; 4];
+    for index in 0..count {
+        file.read_exact(&mut bytes)?;
+        let offset = u64::from(u32::from_le_bytes(bytes));
+        if offset != 0 {
+            if offset > file_length {
+                return Err(ObjectBuilderError::InvalidSpr(format!(
+                    "sprite {} points outside the SPR file",
+                    index + 1
+                )));
+            }
+            indexed_offsets.push((offset, index));
+        }
+    }
+    indexed_offsets.sort_unstable_by_key(|(offset, _)| *offset);
+    let mut sizes = vec![0_u64; count];
+    let mut cursor = 0;
+    while cursor < indexed_offsets.len() {
+        let offset = indexed_offsets[cursor].0;
+        let mut group_end = cursor + 1;
+        while group_end < indexed_offsets.len() && indexed_offsets[group_end].0 == offset {
+            group_end += 1;
+        }
+        let next_offset = indexed_offsets
+            .get(group_end)
+            .map(|(candidate, _)| *candidate)
+            .unwrap_or(file_length);
+        for (_, sprite_index) in &indexed_offsets[cursor..group_end] {
+            sizes[*sprite_index] = next_offset.saturating_sub(offset);
+        }
+        cursor = group_end;
+    }
+    Ok(sizes)
 }
 
 pub fn read_sprite(source: &SpriteSource, id: u32) -> Result<SpriteImage> {
@@ -175,6 +491,56 @@ pub fn read_sprite(source: &SpriteSource, id: u32) -> Result<SpriteImage> {
     let mut compressed = vec![0_u8; data_length];
     file.read_exact(&mut compressed)?;
     decode_sprite(&compressed, source.sprite_size, source.transparency)
+}
+
+/// Decodes many sprites while keeping a single SPR file handle open. This is
+/// used by checksum analysis so large clients do not reopen the archive once
+/// per sprite.
+pub fn visit_sprites<F>(source: &SpriteSource, ids: &[u32], mut visit: F) -> Result<()>
+where
+    F: FnMut(u32, SpriteImage) -> Result<()>,
+{
+    let mut file = File::open(&source.path)?;
+    file.seek(SeekFrom::Start(source.header.table_offset as u64))?;
+    let table_len = usize::try_from(source.header.sprite_count)
+        .unwrap_or(usize::MAX)
+        .checked_mul(4)
+        .ok_or_else(|| ObjectBuilderError::InvalidSpr("sprite table size overflow".into()))?;
+    let mut table = vec![0_u8; table_len];
+    file.read_exact(&mut table)?;
+    let side = u32::from(source.sprite_size);
+    let blank = || {
+        SpriteImage::new(
+            side,
+            side,
+            vec![0; usize::from(source.sprite_size) * usize::from(source.sprite_size) * 4],
+        )
+    };
+    for &id in ids {
+        if id == 0 || id > source.header.sprite_count {
+            return Err(ObjectBuilderError::InvalidSprite(format!(
+                "sprite ID {id} is outside 1..={}",
+                source.header.sprite_count
+            )));
+        }
+        let index = usize::try_from(id - 1).unwrap_or_default() * 4;
+        let data_offset =
+            u32::from_le_bytes(table[index..index + 4].try_into().unwrap_or_default());
+        if data_offset == 0 {
+            visit(id, blank()?)?;
+            continue;
+        }
+        file.seek(SeekFrom::Start(u64::from(data_offset) + 3))?;
+        let mut length_bytes = [0_u8; 2];
+        file.read_exact(&mut length_bytes)?;
+        let mut compressed = vec![0_u8; usize::from(u16::from_le_bytes(length_bytes))];
+        file.read_exact(&mut compressed)?;
+        visit(
+            id,
+            decode_sprite(&compressed, source.sprite_size, source.transparency)?,
+        )?;
+    }
+    Ok(())
 }
 
 fn decode_sprite(compressed: &[u8], sprite_size: u16, transparency: bool) -> Result<SpriteImage> {
@@ -321,12 +687,138 @@ pub fn slice_sheet(
     Ok(sprites)
 }
 
-pub fn split_object_image(image: &SpriteImage, tile_width: u8, tile_height: u8, sprite_size: u16) -> Result<Vec<SpriteImage>> {
+/// Indices into `group.sprite_ids` addressing the tiles of a single layer of one
+/// frame/pattern, in the order `split_object_image` produces its tiles. Both the
+/// layer renderer and the layer writer read the layout through here, so a frame
+/// always reads back from the slots it was written to.
+pub fn frame_layer_slots(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    layer: usize,
+    sprite_size: u16,
+) -> Result<Vec<usize>> {
+    let group = object.frame_groups.get(group_index).ok_or_else(|| {
+        ObjectBuilderError::InvalidSprite("frame group is outside this object".into())
+    })?;
+    if frame_index >= group.frames.len() {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "frame is outside this object".into(),
+        ));
+    }
+    let dimensions = frame_group_dimensions(object, group_index, sprite_size);
+    let tiles = usize::from(dimensions.tile_width) * usize::from(dimensions.tile_height);
+    let layers = usize::from(dimensions.layers.max(1));
+    if layer >= layers {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "layer is outside this object".into(),
+        ));
+    }
+    let phase_stride = group
+        .sprite_ids
+        .len()
+        .checked_div(group.frames.len().max(1))
+        .unwrap_or(0);
+    let patterns = phase_stride
+        .checked_div(tiles.saturating_mul(layers))
+        .unwrap_or(0);
+    if patterns == 0 || pattern_index >= patterns {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "sprite layout is inconsistent with object dimensions".into(),
+        ));
+    }
+    let base = frame_index * phase_stride + pattern_index * layers * tiles + layer * tiles;
+    if base + tiles > group.sprite_ids.len() {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "sprite layout ends unexpectedly".into(),
+        ));
+    }
+    Ok((base..base + tiles).collect())
+}
+
+/// One layer of one frame, drawn without the outfit mask. This is what the pixel
+/// editor paints on: the preview composites layers and tints the mask, and neither
+/// of those can be inverted back into sprite bytes.
+pub fn render_object_layer<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    layer: usize,
+    sprite_size: u16,
+    mut resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    let slots = frame_layer_slots(
+        object,
+        group_index,
+        frame_index,
+        pattern_index,
+        layer,
+        sprite_size,
+    )?;
+    let group = object.frame_groups.get(group_index).ok_or_else(|| {
+        ObjectBuilderError::InvalidSprite("frame group is outside this object".into())
+    })?;
+    let dimensions = frame_group_dimensions(object, group_index, sprite_size);
+    let side = u32::from(sprite_size);
+    let tile_width = u32::from(dimensions.tile_width);
+    let tile_height = u32::from(dimensions.tile_height);
+    let mut target = SpriteImage::new(
+        dimensions.pixel_width,
+        dimensions.pixel_height,
+        vec![
+            0;
+            usize::try_from(
+                dimensions
+                    .pixel_width
+                    .saturating_mul(dimensions.pixel_height)
+                    .saturating_mul(4)
+            )
+            .unwrap_or_default()
+        ],
+    )?;
+    for (index, slot) in slots.iter().enumerate() {
+        let sprite_id = group.sprite_ids.get(*slot).copied().unwrap_or_default();
+        if sprite_id == 0 {
+            continue;
+        }
+        let sprite = resolve(sprite_id)?;
+        if sprite.width != side || sprite.height != side {
+            return Err(ObjectBuilderError::InvalidSprite(format!(
+                "sprite {sprite_id} is {}×{}, expected {side}×{side}",
+                sprite.width, sprite.height
+            )));
+        }
+        let tile_x = index as u32 % tile_width;
+        let tile_y = index as u32 / tile_width;
+        blend_sprite(
+            &mut target,
+            &sprite,
+            (tile_width - tile_x - 1) * side,
+            (tile_height - tile_y - 1) * side,
+        );
+    }
+    Ok(target)
+}
+
+pub fn split_object_image(
+    image: &SpriteImage,
+    tile_width: u8,
+    tile_height: u8,
+    sprite_size: u16,
+) -> Result<Vec<SpriteImage>> {
     let side = u32::from(sprite_size);
     let expected_width = u32::from(tile_width).saturating_mul(side);
     let expected_height = u32::from(tile_height).saturating_mul(side);
     if image.width != expected_width || image.height != expected_height {
-        return Err(ObjectBuilderError::InvalidSprite(format!("object frame must be {expected_width}×{expected_height} pixels; received {}×{}", image.width, image.height)));
+        return Err(ObjectBuilderError::InvalidSprite(format!(
+            "object frame must be {expected_width}×{expected_height} pixels; received {}×{}",
+            image.width, image.height
+        )));
     }
     let mut tiles = Vec::with_capacity(usize::from(tile_width) * usize::from(tile_height));
     for tile_y in 0..u32::from(tile_height) {
@@ -335,7 +827,8 @@ pub fn split_object_image(image: &SpriteImage, tile_width: u8, tile_height: u8, 
             let source_y = (u32::from(tile_height) - tile_y - 1) * side;
             let mut rgba = Vec::with_capacity(usize::try_from(side * side * 4).unwrap_or_default());
             for y in 0..side {
-                let start = usize::try_from(((source_y + y) * image.width + source_x) * 4).unwrap_or_default();
+                let start = usize::try_from(((source_y + y) * image.width + source_x) * 4)
+                    .unwrap_or_default();
                 let end = start + usize::try_from(side * 4).unwrap_or_default();
                 rgba.extend_from_slice(&image.rgba[start..end]);
             }
@@ -386,6 +879,17 @@ impl SpriteCache {
         }
         self.values.get(&id)
     }
+    pub fn clear(&mut self) {
+        self.values.clear();
+        self.order.clear();
+        self.used_bytes = 0;
+    }
+    pub fn used_bytes(&self) -> usize {
+        self.used_bytes
+    }
+    pub fn capacity_bytes(&self) -> usize {
+        self.capacity_bytes
+    }
 }
 
 #[cfg(test)]
@@ -416,6 +920,32 @@ mod tests {
         cache.insert(3, image());
         assert!(cache.get(2).is_none());
         assert!(cache.get(1).is_some());
+    }
+    #[test]
+    fn measures_physical_sprite_blocks_from_the_offset_table() {
+        let path = std::env::temp_dir().join(format!(
+            "object-builder-{}-sprite-sizes.spr",
+            std::process::id()
+        ));
+        let mut bytes = vec![0_u8; 20];
+        bytes[8..12].copy_from_slice(&20_u32.to_le_bytes());
+        bytes[16..20].copy_from_slice(&27_u32.to_le_bytes());
+        bytes.extend([0_u8; 7]);
+        bytes.extend([0_u8; 9]);
+        std::fs::write(&path, bytes).expect("fixture writes");
+        let sizes = sprite_storage_sizes(&SpriteSource {
+            path: path.clone(),
+            header: SprHeader {
+                signature: 0,
+                sprite_count: 3,
+                table_offset: 8,
+            },
+            transparency: true,
+            sprite_size: 32,
+        })
+        .expect("sizes read");
+        let _ = std::fs::remove_file(path);
+        assert_eq!(sizes, vec![7, 0, 9]);
     }
     #[test]
     fn lazily_decodes_a_sprite_from_the_real_860_fixture_when_available() {
@@ -451,5 +981,205 @@ mod tests {
         let loaded = load_png(&path).expect("PNG reads");
         let _ = std::fs::remove_file(path);
         assert_eq!(loaded, image);
+    }
+    #[test]
+    fn renders_multi_tile_objects_at_their_real_dimensions() {
+        let mut object = crate::core::models::test_object();
+        object.dimensions.width = 2;
+        object.frame_groups[0].layout.width = 2;
+        object.frame_groups[0].sprite_ids = vec![1, 2];
+        let rendered = render_object_frame(&object, 0, 0, 0, 2, |id| {
+            let color = if id == 1 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            };
+            SpriteImage::new(2, 2, color.repeat(4))
+        })
+        .expect("multi-tile object renders");
+        assert_eq!((rendered.width, rendered.height), (4, 2));
+        assert_eq!(&rendered.rgba[0..4], &[0, 0, 255, 255]);
+        assert_eq!(&rendered.rgba[8..12], &[255, 0, 0, 255]);
+    }
+    #[test]
+    fn a_rendered_layer_splits_back_into_the_tiles_it_was_drawn_from() {
+        // The tile order of `split_object_image` is the reverse of the pixel order, so a
+        // sign flip here would round-trip a two-tile frame mirrored and silently swap the
+        // sprites of every wide object the editor touches.
+        let mut object = crate::core::models::test_object();
+        object.dimensions.width = 2;
+        object.frame_groups[0].layout.width = 2;
+        object.frame_groups[0].sprite_ids = vec![7, 9];
+        let tile = |id: u32| SpriteImage::new(2, 2, [id as u8, 0, 0, 255].repeat(4));
+        let rendered =
+            render_object_layer(&object, 0, 0, 0, 0, 2, |id| tile(id)).expect("layer renders");
+        assert_eq!((rendered.width, rendered.height), (4, 2));
+        let slots = frame_layer_slots(&object, 0, 0, 0, 0, 2).expect("slots resolve");
+        assert_eq!(slots, vec![0, 1]);
+        let split = split_object_image(&rendered, 2, 1, 2).expect("frame splits");
+        assert_eq!(split.len(), 2);
+        for (index, slot) in slots.iter().enumerate() {
+            let id = object.frame_groups[0].sprite_ids[*slot];
+            assert_eq!(split[index].rgba, tile(id).expect("fixture tile").rgba);
+        }
+    }
+
+    #[test]
+    fn a_layer_renders_without_the_layer_beside_it() {
+        let mut object = crate::core::models::test_object();
+        object.kind = ObjectKind::Outfit;
+        object.dimensions.layers = 2;
+        object.frame_groups[0].layout.layers = 2;
+        object.frame_groups[0].sprite_ids = vec![1, 2];
+        let base = render_object_layer(&object, 0, 0, 0, 0, 2, |id| {
+            assert_eq!(id, 1, "layer zero only reads its own tile");
+            SpriteImage::new(2, 2, [200, 160, 120, 255].repeat(4))
+        })
+        .expect("base layer renders");
+        assert_eq!(&base.rgba[0..4], &[200, 160, 120, 255]);
+        let mask = render_object_layer(&object, 0, 0, 0, 1, 2, |id| {
+            assert_eq!(id, 2, "layer one only reads its own tile");
+            SpriteImage::new(2, 2, [255, 255, 0, 255].repeat(4))
+        })
+        .expect("mask layer renders");
+        // The mask reaches the editor as the raw yellow it is stored as, not tinted.
+        assert_eq!(&mask.rgba[0..4], &[255, 255, 0, 255]);
+    }
+
+    #[test]
+    fn a_layer_outside_the_object_is_refused() {
+        let object = crate::core::models::test_object();
+        assert!(frame_layer_slots(&object, 0, 0, 0, 4, 32).is_err());
+    }
+
+    #[test]
+    fn colorizes_the_four_outfit_mask_channels_without_changing_the_base_alpha() {
+        let mut object = crate::core::models::test_object();
+        object.kind = ObjectKind::Outfit;
+        object.dimensions.layers = 2;
+        object.frame_groups[0].layout.layers = 2;
+        object.frame_groups[0].sprite_ids = vec![1, 2];
+        let rendered = render_object_preview(
+            &object,
+            0,
+            0,
+            0,
+            2,
+            OutfitPreviewColors {
+                head: [255, 0, 0],
+                body: [0, 255, 0],
+                legs: [0, 0, 255],
+                feet: [255, 255, 255],
+            },
+            |id| {
+                if id == 1 {
+                    SpriteImage::new(2, 2, [200, 160, 120, 255].repeat(4))
+                } else {
+                    SpriteImage::new(
+                        2,
+                        2,
+                        vec![
+                            255, 255, 0, 255, 255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255,
+                        ],
+                    )
+                }
+            },
+        )
+        .expect("outfit preview renders");
+        assert_eq!(&rendered.rgba[0..4], &[200, 0, 0, 255]);
+        assert_eq!(&rendered.rgba[4..8], &[0, 160, 0, 255]);
+        assert_eq!(&rendered.rgba[8..12], &[0, 0, 120, 255]);
+        assert_eq!(&rendered.rgba[12..16], &[200, 160, 120, 255]);
+    }
+    #[test]
+    fn renders_the_selected_outfit_direction_pattern() {
+        let mut object = crate::core::models::test_object();
+        object.kind = ObjectKind::Outfit;
+        object.dimensions.patterns = 4;
+        object.frame_groups[0].layout.pattern_x = 4;
+        object.frame_groups[0].sprite_ids = vec![1, 2, 3, 4];
+        let rendered =
+            render_object_preview(&object, 0, 0, 3, 1, OutfitPreviewColors::default(), |id| {
+                SpriteImage::new(1, 1, vec![id as u8, 0, 0, 255])
+            })
+            .expect("direction preview renders");
+        assert_eq!(rendered.rgba, vec![4, 0, 0, 255]);
+    }
+    #[test]
+    fn composes_an_outfit_addon_over_its_directional_body() {
+        let mut object = crate::core::models::test_object();
+        object.kind = ObjectKind::Outfit;
+        object.dimensions.patterns = 2;
+        object.frame_groups[0].layout.pattern_y = 2;
+        object.frame_groups[0].sprite_ids = vec![1, 2];
+        let rendered = render_outfit_preview_with_base(
+            &object,
+            0,
+            0,
+            1,
+            2,
+            OutfitPreviewColors::default(),
+            |id| {
+                let rgba = if id == 1 {
+                    vec![
+                        255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255, 255, 0, 0, 255,
+                    ]
+                } else {
+                    vec![0, 0, 255, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]
+                };
+                SpriteImage::new(2, 2, rgba)
+            },
+        )
+        .expect("outfit body and addon render together");
+        assert_eq!(&rendered.rgba[0..4], &[0, 0, 255, 255]);
+        assert_eq!(&rendered.rgba[4..8], &[255, 0, 0, 255]);
+    }
+    #[test]
+    fn renders_a_real_multi_tile_860_object_when_available() {
+        use crate::core::models::ClientVersion;
+        use crate::formats::{dat::DatFormat, otfi::DatSprConfig, spr::SprFormat, ObjectFormat};
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../860");
+        let dat_path = root.join("Tibia.dat");
+        let spr_path = root.join("Tibia.spr");
+        if !dat_path.exists() || !spr_path.exists() {
+            return;
+        }
+        let config = DatSprConfig::load(&root.join("Tibia.otfi"), ClientVersion::Tibia860)
+            .expect("real OTFI");
+        let database = DatFormat {
+            version: ClientVersion::Tibia860,
+            features: config.features,
+        }
+        .load(&dat_path)
+        .expect("real DAT");
+        let object = database
+            .objects
+            .iter()
+            .find(|object| object.dimensions.width > 1 || object.dimensions.height > 1)
+            .expect("multi-tile object");
+        let header = SprFormat {
+            version: ClientVersion::Tibia860,
+            extended: config.features.extended,
+        }
+        .inspect_path(&spr_path)
+        .expect("real SPR");
+        let source = SpriteSource {
+            path: spr_path,
+            header,
+            transparency: config.features.transparency,
+            sprite_size: config.features.sprite_size,
+        };
+        let rendered = render_object_frame(object, 0, 0, 0, config.features.sprite_size, |id| {
+            read_sprite(&source, id)
+        })
+        .expect("real multi-tile render");
+        assert_eq!(
+            rendered.width,
+            u32::from(object.dimensions.width) * u32::from(config.features.sprite_size)
+        );
+        assert_eq!(
+            rendered.height,
+            u32::from(object.dimensions.height) * u32::from(config.features.sprite_size)
+        );
     }
 }
