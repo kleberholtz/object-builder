@@ -12,6 +12,15 @@ export interface FrameGroup {
   loop: boolean;
   frames: Frame[];
   spriteIds: number[];
+  layout?: {
+    groupType: number;
+    width: number;
+    height: number;
+    layers: number;
+    patternX: number;
+    patternY: number;
+    patternZ: number;
+  };
 }
 
 export interface ThingObject {
@@ -39,4 +48,15 @@ export interface ProjectInfo {
   dirty: boolean;
   projectFile?: string | null;
   spriteSize: number;
+  sourceDirectory?: string | null;
+  datSignature?: number | null;
+  sprSignature?: number | null;
+  clientFeatures?: {
+    extended: boolean;
+    transparency: boolean;
+    frameDurations: boolean;
+    frameGroups: boolean;
+    spriteSize: number;
+    spriteDataSize: number;
+  } | null;
 }
