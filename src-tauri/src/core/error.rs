@@ -16,6 +16,8 @@ pub enum ObjectBuilderError {
     SerializationError(String),
     ObjectNotFound(u32),
     HistoryEmpty,
+    OperationCancelled(String),
+    OperationInProgress(String),
     Operation {
         file: String,
         operation: String,
@@ -42,6 +44,10 @@ impl fmt::Display for ObjectBuilderError {
             }
             Self::ObjectNotFound(id) => write!(formatter, "Object {id} was not found"),
             Self::HistoryEmpty => write!(formatter, "There are no history entries available"),
+            Self::OperationCancelled(operation) => write!(formatter, "{operation} was cancelled"),
+            Self::OperationInProgress(operation) => {
+                write!(formatter, "{operation} is already in progress")
+            }
             Self::Operation {
                 file,
                 operation,
