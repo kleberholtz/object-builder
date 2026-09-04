@@ -7,7 +7,7 @@ export function AppMenu({ label, children }: { label: string; children: ReactNod
     <DropdownMenu.Root>
       <DropdownMenu.Trigger className="h-full px-2.5 text-[12px] text-muted-fg outline-none hover:bg-hover hover:text-foreground data-[state=open]:bg-hover">{label}</DropdownMenu.Trigger>
       <DropdownMenu.Portal>
-        <DropdownMenu.Content align="start" sideOffset={2} className="z-50 min-w-52 rounded-sm border border-border bg-overlay p-1 text-[12px] text-foreground shadow-2xl">
+        <DropdownMenu.Content align="start" sideOffset={2} collisionPadding={8} className="z-50 min-w-52 max-w-[min(24rem,calc(100vw-1rem))] max-h-[var(--radix-dropdown-menu-content-available-height)] overflow-auto rounded-sm border border-border bg-overlay p-1 text-[12px] text-foreground shadow-2xl">
           {children}
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
@@ -24,4 +24,3 @@ export function MenuItem({ children, shortcut, onSelect, checked }: { children: 
 }
 
 export const MenuSeparator = DropdownMenu.Separator;
-

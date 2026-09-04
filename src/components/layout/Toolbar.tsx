@@ -1,19 +1,14 @@
-import { Braces, Download, FolderOpen, Grid3X3, Hand, MousePointer2, Pencil, Redo2, Save, Undo2, Upload, ZoomIn, ZoomOut } from "lucide-react";
+import { Braces, Download, FolderOpen, Grid3X3, MousePointer2, Redo2, Save, Undo2, Upload, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "../ui/button";
 import { Tooltip } from "../ui/tooltip";
 import { useEditorStore } from "../../stores/editor-store";
 import { useHistoryStore } from "../../stores/history-store";
 
-interface ToolbarProps { onSave: () => void; onOpen: () => void; notify: (message: string) => void }
+interface ToolbarProps { onSave: () => void; onOpen: () => void; onImport: () => void; onExport: () => void; onValidate: () => void }
 
-export function Toolbar({ onSave, onOpen, notify }: ToolbarProps) {
+export function Toolbar({ onSave, onOpen, onImport, onExport, onValidate }: ToolbarProps) {
   const { zoom, setZoom, showGrid, toggleGrid, activeTool, setActiveTool } = useEditorStore();
   const { past, future, undo, redo } = useHistoryStore();
-  const tools = [
-    { id: "select" as const, icon: MousePointer2, label: "Select" },
-    { id: "pencil" as const, icon: Pencil, label: "Pencil" },
-    { id: "pan" as const, icon: Hand, label: "Pan" },
-  ];
   return (
     <div className="main-toolbar">
       <div className="toolbar-group">
@@ -27,7 +22,7 @@ export function Toolbar({ onSave, onOpen, notify }: ToolbarProps) {
       </div>
       <div className="toolbar-separator" />
       <div className="toolbar-group">
-        {tools.map(({ id, icon: Icon, label }) => <Tooltip key={id} label={label}><Button variant="ghost" size="icon" className={activeTool === id ? "tool-active" : ""} onClick={() => setActiveTool(id)}><Icon size={15} /></Button></Tooltip>)}
+        <Tooltip label="Select"><Button variant="ghost" size="icon" className={activeTool === "select" ? "tool-active" : ""} onClick={() => setActiveTool("select")}><MousePointer2 size={15} /></Button></Tooltip>
         <Tooltip label="Pixel grid" shortcut="G"><Button variant="ghost" size="icon" className={showGrid ? "tool-active" : ""} onClick={toggleGrid}><Grid3X3 size={15} /></Button></Tooltip>
       </div>
       <div className="toolbar-separator" />
@@ -38,9 +33,9 @@ export function Toolbar({ onSave, onOpen, notify }: ToolbarProps) {
       </div>
       <div className="toolbar-spacer" />
       <div className="toolbar-group">
-        <Button variant="ghost" size="sm" onClick={() => notify("Import queue ready")}><Upload size={14} />Import</Button>
-        <Button variant="ghost" size="sm" onClick={() => notify("Current sprite exported as PNG")}><Download size={14} />Export</Button>
-        <Button variant="subtle" size="sm" onClick={() => notify("No project issues found")}><Braces size={14} />Validate</Button>
+        <Button variant="ghost" size="sm" onClick={onImport}><Upload size={14} />Import</Button>
+        <Button variant="ghost" size="sm" onClick={onExport}><Download size={14} />Export</Button>
+        <Button variant="subtle" size="sm" onClick={onValidate}><Braces size={14} />Validate</Button>
       </div>
     </div>
   );
