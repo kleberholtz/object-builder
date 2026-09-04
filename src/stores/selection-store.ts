@@ -8,10 +8,13 @@ interface SelectionState {
 
 export const useSelectionStore = create<SelectionState>((set) => ({
   selectedKeys: [],
-  select: (key, additive = false) => set((state) => ({
-    selectedKeys: additive
-      ? state.selectedKeys.includes(key) ? state.selectedKeys.filter((value) => value !== key) : [...state.selectedKeys, key]
-      : [key],
-  })),
+  select: (key, additive = false) =>
+    set((state) => ({
+      selectedKeys: additive
+        ? state.selectedKeys.includes(key)
+          ? state.selectedKeys.filter((value) => value !== key)
+          : [...state.selectedKeys, key]
+        : [key],
+    })),
   selectMany: (selectedKeys) => set({ selectedKeys }),
 }));
