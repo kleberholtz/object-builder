@@ -1,9 +1,10 @@
-import { ChevronDown, Copy, MoreHorizontal, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { ChevronDown, Plus, Trash2 } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Switch } from "../../components/ui/switch";
+import { Select } from "../../components/ui/select";
 import { Tabs } from "../../components/ui/tabs";
 import { updateObject } from "../../stores/history-store";
 import { useProjectStore } from "../../stores/project-store";
@@ -33,7 +34,7 @@ export function Inspector() {
   const patch = (transform: (entry: ThingObject) => ThingObject) => updateObject(object, transform);
   return (
     <aside className="inspector panel-border-left">
-      <div className="panel-heading"><span>Inspector</span><Button variant="ghost" size="icon"><MoreHorizontal size={14} /></Button></div>
+      <div className="panel-heading"><span>Inspector</span></div>
       {selectedKeys.length > 1 && <div className="bulk-notice">Editing {selectedKeys.length} selected objects</div>}
       <Tabs.Root value={tab} onValueChange={setTab} className="inspector-tabs">
         <Tabs.List className="inspector-tab-list">
@@ -43,7 +44,7 @@ export function Inspector() {
           <Tabs.Content value="object">
             <Section title="General">
               <PropertyRow label="ID"><div className="locked-input"><Input value={object.id} readOnly /><span>locked</span></div></PropertyRow>
-              <PropertyRow label="Type"><select value={object.kind} onChange={(event) => patch((entry) => ({ ...entry, kind: event.target.value as ThingObject["kind"] }))}><option>Item</option><option>Outfit</option><option>Effect</option><option>Missile</option></select></PropertyRow>
+              <PropertyRow label="Type"><Select value={object.kind} onValueChange={(kind) => patch((entry) => ({ ...entry, kind: kind as ThingObject["kind"] }))} options={["Item", "Outfit", "Effect", "Missile"].map((value) => ({ value, label: value }))} ariaLabel="Object type" /></PropertyRow>
               <PropertyRow label="Name"><Input value={object.name} onChange={(event) => patch((entry) => ({ ...entry, name: event.target.value }))} /></PropertyRow>
               <PropertyRow label="Sprite ID"><Input value={object.spriteId} readOnly /></PropertyRow>
             </Section>
@@ -56,7 +57,7 @@ export function Inspector() {
               </div>
             </Section>
             <Section title="Animation" suffix={`${object.frameGroups.reduce((sum, group) => sum + group.frames.length, 0)} frames`}>
-              <PropertyRow label="Mode"><select value={object.animation.mode} onChange={(event) => patch((entry) => ({ ...entry, animation: { ...entry.animation, mode: event.target.value as ThingObject["animation"]["mode"] } }))}><option>Asynchronous</option><option>Synchronous</option><option>Random</option></select></PropertyRow>
+              <PropertyRow label="Mode"><Select value={object.animation.mode} onValueChange={(mode) => patch((entry) => ({ ...entry, animation: { ...entry.animation, mode: mode as ThingObject["animation"]["mode"] } }))} options={["Asynchronous", "Synchronous", "Random"].map((value) => ({ value, label: value }))} ariaLabel="Animation mode" /></PropertyRow>
               <PropertyRow label="Loop"><Switch checked={object.animation.loop} onCheckedChange={(loop) => patch((entry) => ({ ...entry, animation: { ...entry.animation, loop } }))} /></PropertyRow>
             </Section>
             <Section title="Position">
@@ -79,8 +80,7 @@ export function Inspector() {
             <Section title="Server attributes" suffix={`${object.attributes.length} entries`}>
               <div className="attribute-header"><span>Attribute</span><span>Value</span></div>
               {object.attributes.map((attribute, index) => <div className="attribute-row" key={`${attribute.key}-${index}`}><Input value={attribute.key} onChange={(event) => patch((entry) => ({ ...entry, attributes: entry.attributes.map((item, itemIndex) => itemIndex === index ? { ...item, key: event.target.value } : item) }))} /><Input value={attribute.value} onChange={(event) => patch((entry) => ({ ...entry, attributes: entry.attributes.map((item, itemIndex) => itemIndex === index ? { ...item, value: event.target.value } : item) }))} /><Button variant="ghost" size="icon" onClick={() => patch((entry) => ({ ...entry, attributes: entry.attributes.filter((_, itemIndex) => itemIndex !== index) }))}><Trash2 size={12} /></Button></div>)}
-              <Button variant="outline" size="sm" className="w-full" onClick={() => patch((entry) => ({ ...entry, attributes: [...entry.attributes, { key: "attribute", value: "0" }] }))}><Plus size={12} />Add attribute</Button>
-              <div className="attribute-actions"><Button variant="ghost" size="sm"><Copy size={12} />Copy all</Button><Button variant="ghost" size="sm"><RotateCcw size={12} />Reset</Button></div>
+              <Button variant="outline" size="sm" className="w-full" onClick={() => patch((entry) => ({ ...entry, attributes: [...entry.attributes, { key: "", value: "" }] }))}><Plus size={12} />Add attribute</Button>
             </Section>
           </Tabs.Content>
           <Tabs.Content value="flags">

@@ -1,4 +1,4 @@
-import { Crosshair, Grid3X3, Maximize, Move, Scan, Sparkles } from "lucide-react";
+import { Grid3X3, Maximize, Move, Scan, Sparkles } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Tooltip } from "../../components/ui/tooltip";
@@ -23,7 +23,7 @@ export function SpriteCanvas() {
   useEffect(() => {
     const context = canvasRef.current?.getContext("2d");
     if (!context || !object) return;
-    void paintSprite(context, group?.frames[activeFrame]?.spriteId ?? object.spriteId, activeFrame);
+    void paintSprite(context, group?.frames[activeFrame]?.spriteId ?? object.spriteId);
   }, [activeFrame, group, object]);
 
   const gridStyle = useMemo(() => showGrid ? {
@@ -41,10 +41,8 @@ export function SpriteCanvas() {
       <div className="frame-group-bar">
         <span className="small-label">Frame group</span>
         {frameGroups.map((entry, index) => <button key={entry.id} className={activeFrameGroup === index ? "active" : ""} onClick={() => setActiveFrameGroup(index)}><span className={index === 0 ? "status-pulse" : ""} />{entry.name}</button>)}
-        <button className="add-group">+</button>
         <div className="canvas-inline-tools">
           <Tooltip label="Toggle pixel grid" shortcut="G"><Button variant="ghost" size="icon" className={showGrid ? "tool-active" : ""} onClick={toggleGrid}><Grid3X3 size={14} /></Button></Tooltip>
-          <Tooltip label="Center sprite"><Button variant="ghost" size="icon"><Crosshair size={14} /></Button></Tooltip>
           <Tooltip label="Fit to screen"><Button variant="ghost" size="icon" onClick={() => setZoom(12)}><Maximize size={14} /></Button></Tooltip>
         </div>
       </div>

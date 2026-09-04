@@ -1,4 +1,4 @@
-import { Clock3, Copy, Film, MoreHorizontal, Pause, Play, Plus, Trash2 } from "lucide-react";
+import { Clock3, Copy, Film, Pause, Play, Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
@@ -29,8 +29,19 @@ export function FilmRoll() {
     return () => window.clearTimeout(timer);
   }, [group, playhead, playing, setSelectedFrames]);
 
-  if (!object || !group) return null;
+  const hasAnimation = Boolean(object && (object.frameGroups.length > 1 || object.frameGroups.some((entry) => entry.frames.length > 1)));
+  if (!object || !group || !hasAnimation) return null;
   const mutateFrames = (frames: typeof group.frames) => updateObject(object, (entry) => ({ ...entry, frameGroups: entry.frameGroups.map((item) => item.id === group.id ? { ...item, frames } : item) }));
+  const duplicateFrame = (sourceIndex: number) => updateObject(object, (entry) => ({ ...entry, frameGroups: entry.frameGroups.map((item) => {
+    if (item.id !== group.id) return item;
+    const stride = Math.max(1, Math.floor(item.spriteIds.length / Math.max(1, item.frames.length)));
+    return { ...item, frames: [...item.frames, { ...item.frames[sourceIndex], id: Date.now() }], spriteIds: [...item.spriteIds, ...item.spriteIds.slice(sourceIndex * stride, (sourceIndex + 1) * stride)] };
+  }) }));
+  const deleteFrames = () => updateObject(object, (entry) => ({ ...entry, frameGroups: entry.frameGroups.map((item) => {
+    if (item.id !== group.id) return item;
+    const stride = Math.max(1, Math.floor(item.spriteIds.length / Math.max(1, item.frames.length)));
+    return { ...item, frames: item.frames.filter((_, index) => !selectedFrames.includes(index)), spriteIds: item.spriteIds.filter((_, index) => !selectedFrames.includes(Math.floor(index / stride))) };
+  }) }));
   const selectFrame = (index: number, event: React.MouseEvent) => {
     if (event.shiftKey && selectedFrames.length) {
       const start = Math.min(selectedFrames[0], index), end = Math.max(selectedFrames[0], index);
@@ -49,9 +60,8 @@ export function FilmRoll() {
           <Tooltip label={playing ? "Pause" : "Play animation"}><Button variant="ghost" size="icon" onClick={() => setPlaying(!playing)}>{playing ? <Pause size={13} /> : <Play size={13} />}</Button></Tooltip>
           <span className="timeline-counter">{String((selectedFrames[0] ?? 0) + 1).padStart(2, "0")} / {String(group.frames.length).padStart(2, "0")}</span>
           <div className="toolbar-separator" />
-          <Tooltip label="Duplicate frame"><Button variant="ghost" size="icon" onClick={() => { const source = group.frames[selectedFrames[0] ?? 0]; mutateFrames([...group.frames, { ...source, id: Date.now() }]); }}><Copy size={13} /></Button></Tooltip>
-          <Tooltip label="Delete selected"><Button variant="ghost" size="icon" disabled={group.frames.length <= 1} onClick={() => { mutateFrames(group.frames.filter((_, index) => !selectedFrames.includes(index))); setSelectedFrames([0]); }}><Trash2 size={13} /></Button></Tooltip>
-          <Button variant="ghost" size="icon"><MoreHorizontal size={14} /></Button>
+          <Tooltip label="Duplicate frame"><Button variant="ghost" size="icon" onClick={() => duplicateFrame(selectedFrames[0] ?? 0)}><Copy size={13} /></Button></Tooltip>
+          <Tooltip label="Delete selected"><Button variant="ghost" size="icon" disabled={group.frames.length <= 1 || selectedFrames.length >= group.frames.length} onClick={() => { deleteFrames(); setSelectedFrames([0]); }}><Trash2 size={13} /></Button></Tooltip>
         </div>
       </div>
       <div className="film-body">
@@ -61,7 +71,7 @@ export function FilmRoll() {
             <span className="frame-thumb"><SpritePreview spriteId={frame.spriteId} frame={index} size={50} /></span>
             <span className="frame-duration"><Clock3 size={10} />{frame.duration} ms</span>
           </button>)}
-          <button className="add-frame" onClick={() => { const previous = group.frames[group.frames.length - 1]; mutateFrames([...group.frames, { ...previous, id: Date.now(), spriteId: previous.spriteId + 1 }]); }}><Plus size={17} /><span>Add frame</span></button>
+          <button className="add-frame" onClick={() => duplicateFrame(group.frames.length - 1)}><Plus size={17} /><span>Add frame</span></button>
         </div>
         <div className="duration-editor"><span>Duration</span><Input type="number" value={group.frames[selectedFrames[0] ?? 0]?.duration ?? 100} onChange={(event) => { const duration = Number(event.target.value); mutateFrames(group.frames.map((frame, index) => selectedFrames.includes(index) ? { ...frame, duration } : frame)); }} /><span>ms</span></div>
       </div>
