@@ -1,16 +1,140 @@
-use crate::core::error::{ObjectBuilderError, Result};
+use crate::core::{dimensions::object_dimensions, error::{ObjectBuilderError, Result}, models::ThingObject};
 use crate::formats::spr::SprHeader;
-use serde::Serialize;
+use image::{ImageFormat, ImageReader};
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::PathBuf;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpriteImage {
     pub width: u32,
     pub height: u32,
     pub rgba: Vec<u8>,
+}
+
+pub fn load_png(path: &std::path::Path) -> Result<SpriteImage> {
+    let decoded = ImageReader::open(path)
+        .map_err(|error| ObjectBuilderError::InvalidSprite(format!("unable to open PNG: {error}")))?
+        .with_guessed_format()
+        .map_err(|error| {
+            ObjectBuilderError::InvalidSprite(format!("unable to detect image format: {error}"))
+        })?;
+    if decoded.format() != Some(ImageFormat::Png) {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "the selected file is not a PNG image".into(),
+        ));
+    }
+    let image = decoded
+        .decode()
+        .map_err(|error| {
+            ObjectBuilderError::InvalidSprite(format!("unable to decode PNG: {error}"))
+        })?
+        .into_rgba8();
+    SpriteImage::new(image.width(), image.height(), image.into_raw())
+}
+
+pub fn save_png(path: &std::path::Path, image: &SpriteImage) -> Result<()> {
+    image::save_buffer_with_format(
+        path,
+        &image.rgba,
+        image.width,
+        image.height,
+        image::ColorType::Rgba8,
+        ImageFormat::Png,
+    )
+    .map_err(|error| ObjectBuilderError::IoError(format!("unable to write PNG: {error}")))
+}
+
+pub fn compose_sheet(images: &[SpriteImage]) -> Result<SpriteImage> {
+    let first = images
+        .first()
+        .ok_or_else(|| ObjectBuilderError::InvalidSprite("there are no frames to export".into()))?;
+    if images
+        .iter()
+        .any(|image| image.width != first.width || image.height != first.height)
+    {
+        return Err(ObjectBuilderError::InvalidSprite(
+            "all sprites in a sheet must have matching dimensions".into(),
+        ));
+    }
+    let columns = (f64::from(images.len() as u32).sqrt().ceil() as u32).max(1);
+    let rows = (images.len() as u32).div_ceil(columns);
+    let width = first.width.saturating_mul(columns);
+    let height = first.height.saturating_mul(rows);
+    let mut rgba = vec![
+        0;
+        usize::try_from(width.saturating_mul(height).saturating_mul(4))
+            .unwrap_or_default()
+    ];
+    for (index, image) in images.iter().enumerate() {
+        let column = index as u32 % columns;
+        let row = index as u32 / columns;
+        for y in 0..image.height {
+            let source = usize::try_from(y * image.width * 4).unwrap_or_default();
+            let destination =
+                usize::try_from(((row * image.height + y) * width + column * image.width) * 4)
+                    .unwrap_or_default();
+            let length = usize::try_from(image.width * 4).unwrap_or_default();
+            rgba[destination..destination + length]
+                .copy_from_slice(&image.rgba[source..source + length]);
+        }
+    }
+    SpriteImage::new(width, height, rgba)
+}
+
+pub fn render_object_frame<F>(
+    object: &ThingObject,
+    group_index: usize,
+    frame_index: usize,
+    pattern_index: usize,
+    sprite_size: u16,
+    mut resolve: F,
+) -> Result<SpriteImage>
+where
+    F: FnMut(u32) -> Result<SpriteImage>,
+{
+    let dimensions = object_dimensions(object, sprite_size);
+    let group = object.frame_groups.get(group_index).ok_or_else(|| ObjectBuilderError::InvalidSprite("frame group is outside this object".into()))?;
+    if frame_index >= group.frames.len() { return Err(ObjectBuilderError::InvalidSprite("frame is outside this object".into())); }
+    let tiles = usize::from(dimensions.tile_width) * usize::from(dimensions.tile_height);
+    let layers = usize::from(dimensions.layers.max(1));
+    let phase_stride = group.sprite_ids.len().checked_div(group.frames.len().max(1)).unwrap_or(0);
+    let patterns = phase_stride.checked_div(tiles.saturating_mul(layers)).unwrap_or(0);
+    if patterns == 0 || pattern_index >= patterns { return Err(ObjectBuilderError::InvalidSprite("sprite layout is inconsistent with object dimensions".into())); }
+    let side = u32::from(sprite_size);
+    let mut target = SpriteImage::new(dimensions.pixel_width, dimensions.pixel_height, vec![0; usize::try_from(dimensions.pixel_width.saturating_mul(dimensions.pixel_height).saturating_mul(4)).unwrap_or_default()])?;
+    let base = frame_index * phase_stride + pattern_index * layers * tiles;
+    for layer in 0..layers {
+        for tile_y in 0..usize::from(dimensions.tile_height) {
+            for tile_x in 0..usize::from(dimensions.tile_width) {
+                let sprite_index = base + layer * tiles + tile_y * usize::from(dimensions.tile_width) + tile_x;
+                let sprite_id = *group.sprite_ids.get(sprite_index).ok_or_else(|| ObjectBuilderError::InvalidSprite("sprite layout ends unexpectedly".into()))?;
+                if sprite_id == 0 { continue; }
+                let sprite = resolve(sprite_id)?;
+                if sprite.width != side || sprite.height != side { return Err(ObjectBuilderError::InvalidSprite(format!("sprite {sprite_id} is {}×{}, expected {side}×{side}", sprite.width, sprite.height))); }
+                let destination_x = (u32::from(dimensions.tile_width) - tile_x as u32 - 1) * side;
+                let destination_y = (u32::from(dimensions.tile_height) - tile_y as u32 - 1) * side;
+                blend_sprite(&mut target, &sprite, destination_x, destination_y);
+            }
+        }
+    }
+    Ok(target)
+}
+
+fn blend_sprite(target: &mut SpriteImage, source: &SpriteImage, destination_x: u32, destination_y: u32) {
+    for y in 0..source.height {
+        for x in 0..source.width {
+            let source_index = usize::try_from((y * source.width + x) * 4).unwrap_or_default();
+            let target_index = usize::try_from(((destination_y + y) * target.width + destination_x + x) * 4).unwrap_or_default();
+            let alpha = u32::from(source.rgba[source_index + 3]);
+            if alpha == 0 { continue; }
+            let inverse = 255 - alpha;
+            for channel in 0..3 { target.rgba[target_index + channel] = ((u32::from(source.rgba[source_index + channel]) * alpha + u32::from(target.rgba[target_index + channel]) * inverse) / 255) as u8; }
+            target.rgba[target_index + 3] = (alpha + u32::from(target.rgba[target_index + 3]) * inverse / 255).min(255) as u8;
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -197,6 +321,30 @@ pub fn slice_sheet(
     Ok(sprites)
 }
 
+pub fn split_object_image(image: &SpriteImage, tile_width: u8, tile_height: u8, sprite_size: u16) -> Result<Vec<SpriteImage>> {
+    let side = u32::from(sprite_size);
+    let expected_width = u32::from(tile_width).saturating_mul(side);
+    let expected_height = u32::from(tile_height).saturating_mul(side);
+    if image.width != expected_width || image.height != expected_height {
+        return Err(ObjectBuilderError::InvalidSprite(format!("object frame must be {expected_width}×{expected_height} pixels; received {}×{}", image.width, image.height)));
+    }
+    let mut tiles = Vec::with_capacity(usize::from(tile_width) * usize::from(tile_height));
+    for tile_y in 0..u32::from(tile_height) {
+        for tile_x in 0..u32::from(tile_width) {
+            let source_x = (u32::from(tile_width) - tile_x - 1) * side;
+            let source_y = (u32::from(tile_height) - tile_y - 1) * side;
+            let mut rgba = Vec::with_capacity(usize::try_from(side * side * 4).unwrap_or_default());
+            for y in 0..side {
+                let start = usize::try_from(((source_y + y) * image.width + source_x) * 4).unwrap_or_default();
+                let end = start + usize::try_from(side * 4).unwrap_or_default();
+                rgba.extend_from_slice(&image.rgba[start..end]);
+            }
+            tiles.push(SpriteImage::new(side, side, rgba)?);
+        }
+    }
+    Ok(tiles)
+}
+
 pub struct SpriteCache {
     capacity_bytes: usize,
     used_bytes: usize,
@@ -288,5 +436,20 @@ mod tests {
         let image = read_sprite(&source, 453_694).expect("real sprite should decode");
         assert_eq!(image.rgba.len(), 4096);
         assert!(image.rgba.chunks_exact(4).any(|pixel| pixel[3] != 0));
+    }
+    #[test]
+    fn png_round_trip_preserves_rgba_pixels() {
+        let image = SpriteImage::new(
+            2,
+            2,
+            vec![255, 0, 0, 255, 0, 0, 0, 0, 0, 255, 0, 128, 0, 0, 255, 255],
+        )
+        .expect("valid image");
+        let path =
+            std::env::temp_dir().join(format!("object-builder-{}-sprite.png", std::process::id()));
+        save_png(&path, &image).expect("PNG writes");
+        let loaded = load_png(&path).expect("PNG reads");
+        let _ = std::fs::remove_file(path);
+        assert_eq!(loaded, image);
     }
 }

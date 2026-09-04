@@ -78,7 +78,10 @@ mod tests {
     use super::*;
     #[test]
     fn undo_and_redo_restore_an_object_change() {
-        let mut database = ObjectDatabase::demo();
+        let mut database = ObjectDatabase {
+            objects: vec![crate::core::models::test_object()],
+            ..ObjectDatabase::default()
+        };
         let before = database.objects[0].clone();
         let mut after = before.clone();
         after.name = "Changed".into();
