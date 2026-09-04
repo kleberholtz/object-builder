@@ -2386,15 +2386,17 @@ dependencies = [
 
 [[package]]
 name = "object-builder"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "image",
+ "libc",
  "serde",
  "serde_json",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
  "tauri-plugin-opener",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
