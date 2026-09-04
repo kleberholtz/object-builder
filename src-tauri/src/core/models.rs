@@ -104,6 +104,20 @@ pub struct FrameGroup {
     pub looped: bool,
     pub frames: Vec<Frame>,
     pub sprite_ids: Vec<u32>,
+    #[serde(default)]
+    pub layout: FrameLayout,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FrameLayout {
+    pub group_type: u8,
+    pub width: u8,
+    pub height: u8,
+    pub layers: u8,
+    pub pattern_x: u8,
+    pub pattern_y: u8,
+    pub pattern_z: u8,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -208,7 +222,20 @@ pub struct ProjectInfo {
     pub sprite_count: u32,
     pub dirty: bool,
     pub project_file: Option<String>,
+    #[serde(default = "default_sprite_size")]
     pub sprite_size: u16,
+    #[serde(default)]
+    pub source_directory: Option<String>,
+    #[serde(default)]
+    pub dat_signature: Option<u32>,
+    #[serde(default)]
+    pub spr_signature: Option<u32>,
+    #[serde(default)]
+    pub client_features: Option<ClientFeatures>,
+}
+
+fn default_sprite_size() -> u16 {
+    32
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -258,6 +285,15 @@ pub fn test_object() -> ThingObject {
                 duration: 100,
             }],
             sprite_ids: vec![1],
+            layout: FrameLayout {
+                group_type: 0,
+                width: 1,
+                height: 1,
+                layers: 1,
+                pattern_x: 1,
+                pattern_y: 1,
+                pattern_z: 1,
+            },
         }],
         raw_record: Vec::new(),
     }
