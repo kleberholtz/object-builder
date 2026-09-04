@@ -648,6 +648,69 @@
   margin: 0;
   color: var(--c-c2c6ca);
 }
+.save-detail {
+  grid-column: 2;
+  margin: -2px 0 0;
+  overflow: hidden;
+  color: var(--c-747c85);
+  font:
+    9px/1.4 ui-monospace,
+    monospace;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.save-steps {
+  grid-column: 1/-1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(122px, 1fr));
+  gap: 4px 10px;
+  margin: 6px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.save-steps li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10px;
+  color: var(--c-626a73);
+}
+.save-steps li > i {
+  display: grid;
+  place-items: center;
+  width: 13px;
+  height: 13px;
+  flex: none;
+  border: 1px solid var(--c-343941);
+  border-radius: 50%;
+}
+.save-steps li.done {
+  color: var(--c-a9b0b8);
+}
+.save-steps li.done > i {
+  border-color: var(--c-3f6a4c);
+  color: var(--c-6db684);
+}
+.save-steps li.active {
+  color: var(--c-e2c3b0);
+}
+.save-steps li.active > i {
+  border-color: var(--c-a85c3d);
+  color: var(--c-d1744e);
+}
+.save-steps li > em {
+  margin-left: auto;
+  color: var(--c-626a73);
+  font:
+    9px ui-monospace,
+    monospace;
+  font-style: normal;
+}
+.save-step-spinner {
+  animation: spin 1.1s linear infinite;
+}
 .save-error {
   grid-column: 1/-1;
   display: flex;
@@ -1656,6 +1719,59 @@ body {
   color: var(--c-c67b5f);
   font-size: 10px;
   font-style: normal;
+}
+.split-options {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 16px;
+}
+.split-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--c-2c3138);
+  border-radius: 4px;
+  background: var(--c-191d21);
+  cursor: pointer;
+}
+.split-option:hover {
+  border-color: var(--c-3d434c);
+}
+.split-option:has([data-state="checked"]) {
+  border-color: var(--c-a85c3d);
+  background: var(--c-25211f);
+}
+.split-option > span {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.split-option strong {
+  font-size: 11px;
+  color: var(--c-cbd0d5);
+}
+.split-option small {
+  color: var(--c-858d96);
+  font-size: 10px;
+}
+.split-option .number-input {
+  margin-left: auto;
+}
+.split-note {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0;
+  color: var(--c-747c85);
+  font-size: 10px;
+  line-height: 1.45;
+}
+.split-note > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--c-ce7651);
 }
 @media (max-width: 720px) {
   .format-choice-grid,
