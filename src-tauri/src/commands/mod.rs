@@ -4003,22 +4003,17 @@ pub async fn import_object(
     }
     let mut workspace = lock_workspace(&state)?;
     let mut object = bundle.object;
-    if workspace
+    // The id in the file is the one it had in the exporting project; here it always
+    // lands after the last object of its kind.
+    object.id = workspace
         .database
         .objects
         .iter()
-        .any(|entry| entry.id == object.id && entry.kind == object.kind)
-    {
-        object.id = workspace
-            .database
-            .objects
-            .iter()
-            .filter(|entry| entry.kind == object.kind)
-            .map(|entry| entry.id)
-            .max()
-            .unwrap_or(0)
-            .saturating_add(1);
-    }
+        .filter(|entry| entry.kind == object.kind)
+        .map(|entry| entry.id)
+        .max()
+        .unwrap_or(0)
+        .saturating_add(1);
     refresh_frame_ids(&mut object);
     let mut next = workspace
         .sprite_count
