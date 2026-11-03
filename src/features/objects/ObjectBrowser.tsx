@@ -1,11 +1,13 @@
 import * as Popover from "@radix-ui/react-popover";
 import {
+  Check,
   Copy,
   Download,
   ExternalLink,
   Film,
   Layers3,
   ListOrdered,
+  Minus,
   Search,
   SlidersHorizontal,
   Trash2,
@@ -33,6 +35,7 @@ import { flushCoreMutations, useHistoryStore } from "../../stores/history-store"
 import { useSettingsStore } from "../../stores/settings-store";
 import type { ThingObject } from "../../types/editor";
 import { SpritePreview } from "../sprites/SpritePreview";
+import { exportObdBatch } from "./export-obd";
 
 type Filters = {
   animated: boolean | null;
@@ -123,6 +126,7 @@ export function ObjectBrowser() {
   const clearOrderDrafts = useProjectStore((state) => state.clearOrderDrafts);
   const selectedKeys = useSelectionStore((state) => state.selectedKeys);
   const select = useSelectionStore((state) => state.select);
+  const selectMany = useSelectionStore((state) => state.selectMany);
   const defaultSort = useSettingsStore((state) => state.defaultSort);
   const lastSort = useSettingsStore((state) => state.lastSort);
   const rememberSort = useSettingsStore((state) => state.rememberSort);
@@ -148,6 +152,14 @@ export function ObjectBrowser() {
   const [draggedKey, setDraggedKey] = useState<string | null>(null);
   const [dropTarget, setDropTarget] = useState<ObjectDropTarget | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState<ThingObject> | null>(null);
+  const [exportingBatch, setExportingBatch] = useState(false);
+  // Where the next Shift+click range starts: the last row clicked without Shift.
+  const selectionAnchor = useRef<string | null>(null);
+  const pageKeys = objects.map(objectKey);
+  const pageSelected = pageKeys.filter((key) => selectedKeys.includes(key)).length;
+  // With more than one object selected the checkboxes stay visible, so it is clear that a
+  // plain click would drop the others.
+  const selecting = selectedKeys.length > 1;
   const activeFilterCount = Object.values(filters).filter((value) => value !== null).length;
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
   const rows = useVirtualWindow({
@@ -371,6 +383,47 @@ export function ObjectBrowser() {
       );
     }
   };
+  const pick = (key: string, range: boolean, additive: boolean) => {
+    const anchor = selectionAnchor.current;
+    if (range && anchor && pageKeys.includes(anchor)) {
+      const from = pageKeys.indexOf(anchor);
+      const to = pageKeys.indexOf(key);
+      const span = pageKeys.slice(Math.min(from, to), Math.max(from, to) + 1);
+      const base = additive ? selectedKeys.filter((value) => !span.includes(value)) : [];
+      selectMany([...base, ...span]);
+      return;
+    }
+    selectionAnchor.current = key;
+    select(key, additive);
+  };
+  const clickRow = (key: string, event: React.MouseEvent) =>
+    pick(key, event.shiftKey, event.ctrlKey || event.metaKey);
+  // The checkbox always adds to the selection, the way Ctrl+click on the row does.
+  const toggleRow = (key: string, event: React.MouseEvent) => {
+    event.stopPropagation();
+    pick(key, event.shiftKey, true);
+  };
+  const togglePage = () => {
+    const rest = selectedKeys.filter((key) => !pageKeys.includes(key));
+    selectMany(pageSelected === pageKeys.length ? rest : [...rest, ...pageKeys]);
+  };
+  const exportSelection = async (keys: string[]) => {
+    if (exportingBatch) return;
+    setExportingBatch(true);
+    try {
+      const result = await exportObdBatch(keys);
+      if (result)
+        writeLog(
+          "INFO",
+          tr("Exported {count} objects as OBD", { count: result.count }),
+          result.directory,
+        );
+    } catch (error) {
+      writeLog("ERROR", tr("Unable to export selected objects"), undefined, String(error));
+    } finally {
+      setExportingBatch(false);
+    }
+  };
   const hasOrderDraft = objectOrderDraft || Object.keys(frameOrderDrafts).length > 0;
   const applyOrder = async () => {
     if (applyingOrder || !("__TAURI_INTERNALS__" in window)) return;
@@ -512,9 +565,51 @@ export function ObjectBrowser() {
           </Button>
         </Tooltip>
       </div>
-      <div className="list-header">
-        <span>{t("Object")}</span>
-        <span>{t("Info")}</span>
+      <div className={`list-header ${selecting ? "selecting" : ""}`}>
+        <span className="list-header-select">
+          <span
+            role="checkbox"
+            tabIndex={0}
+            aria-checked={
+              pageSelected === 0 ? false : pageSelected === pageKeys.length ? true : "mixed"
+            }
+            aria-label={t("Select page")}
+            className="row-check"
+            onClick={togglePage}
+            onKeyDown={(event) => {
+              if (event.key === " " || event.key === "Enter") {
+                event.preventDefault();
+                togglePage();
+              }
+            }}
+          >
+            {pageSelected > 0 &&
+              (pageSelected === pageKeys.length ? <Check size={9} /> : <Minus size={9} />)}
+          </span>
+          {selecting ? t("{count} selected", { count: selectedKeys.length }) : t("Object")}
+        </span>
+        {selecting ? (
+          <span className="list-header-actions">
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={exportingBatch}
+              onClick={() => void exportSelection(selectedKeys)}
+            >
+              <Download size={11} />
+              {exportingBatch ? t("Exporting…") : t("Export OBD")}
+            </Button>
+            <button
+              className="list-header-clear"
+              onClick={() => selectMany([])}
+              aria-label={t("Clear selection")}
+            >
+              <X size={11} />
+            </button>
+          </span>
+        ) : (
+          <span>{t("Info")}</span>
+        )}
       </div>
       <ScrollArea className="object-list" viewportRef={rows.viewportRef}>
         {loading ? (
@@ -546,10 +641,12 @@ export function ObjectBrowser() {
                   }
                   key={key}
                   className={`object-row ${selectedKeys.includes(key) ? "selected" : ""} ${draggedKey === key ? "dragging" : ""} ${dropClass}`}
-                  onClick={(event) => select(key, event.ctrlKey || event.metaKey)}
+                  onClick={(event) => clickRow(key, event)}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    select(key);
+                    // A multi-selection survives the right-click, so the menu can offer both
+                    // the object under the pointer and the whole selection.
+                    if (!selecting) select(key);
                     setContextMenu({ x: event.clientX, y: event.clientY, target: object });
                   }}
                   onDragStart={(event) => {
@@ -589,6 +686,15 @@ export function ObjectBrowser() {
                   }}
                 >
                   <div className="thumb-wrap">
+                    <span
+                      role="checkbox"
+                      aria-checked={selectedKeys.includes(key)}
+                      aria-label={t("Select {kind} #{id}", { kind: t(object.kind), id: object.id })}
+                      className={`row-check ${selecting ? "visible" : ""}`}
+                      onClick={(event) => toggleRow(key, event)}
+                    >
+                      {selectedKeys.includes(key) && <Check size={9} />}
+                    </span>
                     <SpritePreview spriteId={object.spriteId} object={object} size={38} />
                     {object.modified && <span className="modified-dot" />}
                   </div>
@@ -662,6 +768,17 @@ export function ObjectBrowser() {
                   icon: <Download size={13} />,
                   onSelect: () => void exportObject(contextMenu.target),
                 },
+                ...(selecting
+                  ? [
+                      {
+                        label: t("Export {count} selected as OBD…", {
+                          count: selectedKeys.length,
+                        }),
+                        icon: <Download size={13} />,
+                        onSelect: () => void exportSelection(selectedKeys),
+                      },
+                    ]
+                  : []),
                 {
                   label: t("Export PNG…"),
                   icon: <Download size={13} />,

@@ -6,6 +6,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import { open, save as saveDialog } from "@tauri-apps/plugin-dialog";
 import { FilmRoll } from "./features/film-roll/FilmRoll";
 import { ObjectBrowser } from "./features/objects/ObjectBrowser";
+import { exportObdBatch } from "./features/objects/export-obd";
 import { Inspector } from "./features/objects/Inspector";
 import { SpriteCanvas } from "./features/sprites/SpriteCanvas";
 import { MenuBar } from "./components/layout/MenuBar";
@@ -451,6 +452,15 @@ function App() {
     [adjustObjectCount, notify, objects, select, setObjects, t],
   );
   const exportObd = useCallback(async () => {
+    if (selectedKeys.length > 1 && isTauri()) {
+      try {
+        const result = await exportObdBatch(selectedKeys);
+        if (result) notify("Exported {count} objects as OBD", { count: result.count });
+      } catch (error) {
+        notify("Unable to export selected objects: {details}", { details: errorText(error) });
+      }
+      return;
+    }
     const object = requireObject();
     if (!object || !isTauri()) return;
     const path = await saveDialog({
@@ -469,7 +479,7 @@ function App() {
     } catch (error) {
       notify("Unable to export object: {details}", { details: errorText(error) });
     }
-  }, [notify, requireObject, t]);
+  }, [notify, requireObject, selectedKeys, t]);
   const exportPng = useCallback(
     async (mode = "frame") => {
       const object = requireObject();

@@ -335,6 +335,63 @@ button {
   border-radius: 50%;
   background: var(--c-d57a4d);
 }
+/* Hidden until the row is hovered, and kept on screen while more than one object is
+   selected or this one is checked. It sits over the thumbnail so the row grid is untouched. */
+.row-check {
+  width: 13px;
+  height: 13px;
+  display: grid;
+  place-items: center;
+  flex: none;
+  border: 1px solid var(--c-676e77);
+  border-radius: 2px;
+  background: var(--c-15181b);
+  color: var(--c-15181b);
+  cursor: pointer;
+}
+.row-check[aria-checked="true"],
+.row-check[aria-checked="mixed"] {
+  border-color: var(--c-d57a4d);
+  background: var(--c-d57a4d);
+}
+.thumb-wrap .row-check {
+  position: absolute;
+  top: -3px;
+  left: -3px;
+  z-index: 1;
+  opacity: 0;
+}
+.object-row:hover .row-check,
+.row-check.visible,
+.row-check[aria-checked="true"] {
+  opacity: 1;
+}
+.list-header.selecting {
+  grid-template-columns: 1fr auto;
+}
+.list-header-select {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+}
+.list-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+.list-header-actions button {
+  height: 19px;
+  font-size: 10px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.list-header-clear {
+  display: grid;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--c-747b84);
+}
 .object-copy {
   min-width: 0;
   display: flex;

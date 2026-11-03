@@ -332,6 +332,17 @@ const pt: Record<string, string> = {
   "No objects match the current filters":
     "Nenhum objeto corresponde aos filtros atuais",
   "Export OBD…": "Exportar OBD…",
+  "Export OBD": "Exportar OBD",
+  "Export {count} selected as OBD…": "Exportar {count} selecionados como OBD…",
+  "Export objects as OBD to folder": "Exportar objetos como OBD para a pasta",
+  "Exported {count} objects as OBD": "{count} objetos exportados como OBD",
+  "Unable to export selected objects": "Não foi possível exportar os objetos selecionados",
+  "Unable to export selected objects: {details}":
+    "Não foi possível exportar os objetos selecionados: {details}",
+  "Exporting…": "Exportando…",
+  "Select page": "Selecionar página",
+  "Select {kind} #{id}": "Selecionar {kind} #{id}",
+  "Clear selection": "Limpar seleção",
   "Export PNG…": "Exportar PNG…",
   "Unable to load object page": "Não foi possível carregar a página de objetos",
   "Page {page}": "Página {page}",
