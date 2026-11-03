@@ -493,30 +493,31 @@ pub fn read_sprite(source: &SpriteSource, id: u32) -> Result<SpriteImage> {
     decode_sprite(&compressed, source.sprite_size, source.transparency)
 }
 
-/// Decodes many sprites while keeping a single SPR file handle open. This is
-/// used by checksum analysis so large clients do not reopen the archive once
-/// per sprite.
-pub fn visit_sprites<F>(source: &SpriteSource, ids: &[u32], mut visit: F) -> Result<()>
-where
-    F: FnMut(u32, SpriteImage) -> Result<()>,
-{
-    let mut file = File::open(&source.path)?;
-    file.seek(SeekFrom::Start(source.header.table_offset as u64))?;
-    let table_len = usize::try_from(source.header.sprite_count)
-        .unwrap_or(usize::MAX)
-        .checked_mul(4)
-        .ok_or_else(|| ObjectBuilderError::InvalidSpr("sprite table size overflow".into()))?;
-    let mut table = vec![0_u8; table_len];
-    file.read_exact(&mut table)?;
-    let side = u32::from(source.sprite_size);
-    let blank = || {
-        SpriteImage::new(
-            side,
-            side,
-            vec![0; usize::from(source.sprite_size) * usize::from(source.sprite_size) * 4],
-        )
-    };
-    for &id in ids {
+pub struct SpriteReader<'a> {
+    source: &'a SpriteSource,
+    file: File,
+    table: Vec<u8>,
+}
+
+impl<'a> SpriteReader<'a> {
+    pub fn open(source: &'a SpriteSource) -> Result<Self> {
+        let mut file = File::open(&source.path)?;
+        file.seek(SeekFrom::Start(source.header.table_offset as u64))?;
+        let table_len = usize::try_from(source.header.sprite_count)
+            .unwrap_or(usize::MAX)
+            .checked_mul(4)
+            .ok_or_else(|| ObjectBuilderError::InvalidSpr("sprite table size overflow".into()))?;
+        let mut table = vec![0_u8; table_len];
+        file.read_exact(&mut table)?;
+        Ok(Self {
+            source,
+            file,
+            table,
+        })
+    }
+
+    pub fn read(&mut self, id: u32) -> Result<SpriteImage> {
+        let source = self.source;
         if id == 0 || id > source.header.sprite_count {
             return Err(ObjectBuilderError::InvalidSprite(format!(
                 "sprite ID {id} is outside 1..={}",
@@ -525,20 +526,35 @@ where
         }
         let index = usize::try_from(id - 1).unwrap_or_default() * 4;
         let data_offset =
-            u32::from_le_bytes(table[index..index + 4].try_into().unwrap_or_default());
+            u32::from_le_bytes(self.table[index..index + 4].try_into().unwrap_or_default());
         if data_offset == 0 {
-            visit(id, blank()?)?;
-            continue;
+            let side = u32::from(source.sprite_size);
+            return SpriteImage::new(
+                side,
+                side,
+                vec![0; usize::from(source.sprite_size) * usize::from(source.sprite_size) * 4],
+            );
         }
-        file.seek(SeekFrom::Start(u64::from(data_offset) + 3))?;
+        self.file
+            .seek(SeekFrom::Start(u64::from(data_offset) + 3))?;
         let mut length_bytes = [0_u8; 2];
-        file.read_exact(&mut length_bytes)?;
+        self.file.read_exact(&mut length_bytes)?;
         let mut compressed = vec![0_u8; usize::from(u16::from_le_bytes(length_bytes))];
-        file.read_exact(&mut compressed)?;
-        visit(
-            id,
-            decode_sprite(&compressed, source.sprite_size, source.transparency)?,
-        )?;
+        self.file.read_exact(&mut compressed)?;
+        decode_sprite(&compressed, source.sprite_size, source.transparency)
+    }
+}
+
+/// Decodes many sprites while keeping a single SPR file handle open. This is
+/// used by checksum analysis so large clients do not reopen the archive once
+/// per sprite.
+pub fn visit_sprites<F>(source: &SpriteSource, ids: &[u32], mut visit: F) -> Result<()>
+where
+    F: FnMut(u32, SpriteImage) -> Result<()>,
+{
+    let mut reader = SpriteReader::open(source)?;
+    for &id in ids {
+        visit(id, reader.read(id)?)?;
     }
     Ok(())
 }

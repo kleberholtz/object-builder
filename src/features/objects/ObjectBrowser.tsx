@@ -153,12 +153,9 @@ export function ObjectBrowser() {
   const [dropTarget, setDropTarget] = useState<ObjectDropTarget | null>(null);
   const [contextMenu, setContextMenu] = useState<ContextMenuState<ThingObject> | null>(null);
   const [exportingBatch, setExportingBatch] = useState(false);
-  // Where the next Shift+click range starts: the last row clicked without Shift.
   const selectionAnchor = useRef<string | null>(null);
   const pageKeys = objects.map(objectKey);
   const pageSelected = pageKeys.filter((key) => selectedKeys.includes(key)).length;
-  // With more than one object selected the checkboxes stay visible, so it is clear that a
-  // plain click would drop the others.
   const selecting = selectedKeys.length > 1;
   const activeFilterCount = Object.values(filters).filter((value) => value !== null).length;
   const closeContextMenu = useCallback(() => setContextMenu(null), []);
@@ -398,7 +395,6 @@ export function ObjectBrowser() {
   };
   const clickRow = (key: string, event: React.MouseEvent) =>
     pick(key, event.shiftKey, event.ctrlKey || event.metaKey);
-  // The checkbox always adds to the selection, the way Ctrl+click on the row does.
   const toggleRow = (key: string, event: React.MouseEvent) => {
     event.stopPropagation();
     pick(key, event.shiftKey, true);
@@ -644,8 +640,6 @@ export function ObjectBrowser() {
                   onClick={(event) => clickRow(key, event)}
                   onContextMenu={(event) => {
                     event.preventDefault();
-                    // A multi-selection survives the right-click, so the menu can offer both
-                    // the object under the pointer and the whole selection.
                     if (!selecting) select(key);
                     setContextMenu({ x: event.clientX, y: event.clientY, target: object });
                   }}
