@@ -39,6 +39,7 @@ import {
 import { SaveProgressDialog, type SaveProgress } from "./features/project/SaveProgressDialog";
 import { SpriteManagerDialog } from "./features/sprites/SpriteManagerDialog";
 import { OptimizeDialog } from "./features/project/OptimizeDialog";
+import { WebExportDialog } from "./features/project/WebExportDialog";
 import { SaveAsDialog, type SaveAsFormat } from "./features/project/SaveAsDialog";
 import { ExportObjectDialog, type ObjectExportFormat } from "./features/objects/ExportObjectDialog";
 import { CommandPalette, type CommandActions } from "./features/command-palette/CommandPalette";
@@ -103,6 +104,7 @@ function App() {
   const [spriteManagerOpen, setSpriteManagerOpen] = useState(false);
   const [spriteManagerScope, setSpriteManagerScope] = useState<ThingObject | null>(null);
   const [optimizeOpen, setOptimizeOpen] = useState(false);
+  const [webExportOpen, setWebExportOpen] = useState(false);
   const [recentLoadProgress, setRecentLoadProgress] = useState<RecentLoadProgress | null>(null);
   const [closePromptOpen, setClosePromptOpen] = useState(false);
   const [closingAfterSave, setClosingAfterSave] = useState(false);
@@ -714,6 +716,10 @@ function App() {
       optimizeOpenPending.current = false;
     }, 0);
   }, []);
+  const openWebExport = useCallback(() => {
+    if (!isTauri()) return notify("Web template export requires the Tauri desktop application");
+    window.setTimeout(() => setWebExportOpen(true), 0);
+  }, [notify]);
   const navigateToObject = useCallback(
     async (reference: { id: number; kind: ThingObject["kind"] }) => {
       try {
@@ -1042,6 +1048,7 @@ function App() {
           }}
           onValidate={() => void validateProject()}
           onOptimize={openOptimize}
+          onWebExport={openWebExport}
           onDuplicate={() => {
             copyObject();
             void pasteObject();
@@ -1140,6 +1147,9 @@ function App() {
           onNavigateObject={(reference) => void navigateToObject(reference)}
           onOptimize={openOptimize}
         />
+        {webExportOpen && (
+          <WebExportDialog open onOpenChange={setWebExportOpen} />
+        )}
         {optimizeOpen && (
           <OptimizeDialog
             open

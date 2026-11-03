@@ -29,6 +29,7 @@ interface MenuBarProps {
   onHistory: () => void;
   onValidate: () => void;
   onOptimize: () => void;
+  onWebExport: () => void;
   onDuplicate: () => void;
   onClose: () => void;
 }
@@ -52,6 +53,7 @@ export function MenuBar({
   onHistory,
   onValidate,
   onOptimize,
+  onWebExport,
   onDuplicate,
   onClose,
 }: MenuBarProps) {
@@ -142,6 +144,8 @@ export function MenuBar({
         <AppMenu label={t("Tools")}>
           <MenuItem onSelect={onValidate}>{t("Validate project")}</MenuItem>
           <MenuItem onSelect={onOptimize}>{t("Optimize project…")}</MenuItem>
+          <MenuSeparator className="my-1 h-px bg-border" />
+          <MenuItem onSelect={onWebExport}>{t("Export web template…")}</MenuItem>
         </AppMenu>
         <AppMenu label={t("Settings")}>
           <MenuItem onSelect={onSettings}>{t("Application Settings…")}</MenuItem>

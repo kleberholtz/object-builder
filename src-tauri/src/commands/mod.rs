@@ -46,6 +46,8 @@ use std::{
 };
 use tauri::{ipc::Channel, AppHandle, State};
 
+pub mod web_export;
+
 fn lock_workspace<'a>(state: &'a State<'_, AppState>) -> Result<MutexGuard<'a, WorkspaceState>> {
     state
         .0
@@ -4007,8 +4009,6 @@ pub struct ObjectBatchExportRequest {
     pub directory: String,
 }
 
-/// Writes one `<kind>-<id>.obd` per object into `directory`, the same name the single
-/// export suggests. Returns how many files were written.
 #[tauri::command]
 pub async fn export_objects(
     app: AppHandle,
@@ -4082,8 +4082,6 @@ pub async fn import_object(
     }
     let mut workspace = lock_workspace(&state)?;
     let mut object = bundle.object;
-    // The id in the file is the one it had in the exporting project; here it always
-    // lands after the last object of its kind.
     object.id = workspace
         .database
         .objects

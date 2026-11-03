@@ -335,8 +335,6 @@ button {
   border-radius: 50%;
   background: var(--c-d57a4d);
 }
-/* Hidden until the row is hovered, and kept on screen while more than one object is
-   selected or this one is checked. It sits over the thumbnail so the row grid is untouched. */
 .row-check {
   width: 13px;
   height: 13px;

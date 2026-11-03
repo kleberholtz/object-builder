@@ -1105,7 +1105,7 @@ function stageCounter(t: Translate, progress: OptimizationProgress | null) {
   });
 }
 
-function formatEta(t: Translate, seconds?: number | null) {
+export function formatEta(t: Translate, seconds?: number | null) {
   if (seconds === null || seconds === undefined) return t("Calculating ETA…");
   if (seconds < 1) return t("Finishing…");
   if (seconds < 60) return t("ETA {seconds}s", { seconds });

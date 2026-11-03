@@ -66,4 +66,5 @@ impl Default for WorkspaceState {
 pub struct AppState(
     pub Mutex<WorkspaceState>,
     pub Mutex<HashMap<String, Arc<AtomicBool>>>,
+    pub Mutex<HashMap<String, Arc<AtomicBool>>>,
 );

@@ -3974,3 +3974,127 @@ body {
     monospace;
   font-variant-numeric: tabular-nums;
 }
+.web-export-dialog {
+  width: min(600px, calc(100vw - 40px));
+}
+.web-export-body {
+  max-height: min(620px, calc(100vh - 155px));
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 16px;
+}
+.web-export-body section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.web-export-body strong {
+  font-size: 11px;
+}
+.web-export-body small {
+  color: var(--c-858d96);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.web-export-kinds {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.web-export-kinds > button {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px;
+  border: 1px solid var(--c-363c44);
+  border-radius: 4px;
+  background: var(--c-191d21);
+  color: var(--c-cbd0d5);
+  text-align: left;
+  font-size: 12px;
+}
+.web-export-kinds > button[aria-pressed="true"] {
+  border-color: var(--c-a85c3d);
+  background: var(--c-25211f);
+  box-shadow: 0 0 0 1px var(--c-a85c3d55);
+}
+.web-export-kinds > button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.web-export-target {
+  flex-direction: row;
+  gap: 18px;
+}
+.web-export-target label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.web-export-path {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.web-export-path > span {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  padding: 6px 8px;
+  border: 1px solid var(--c-32373e);
+  border-radius: 3px;
+  background: var(--c-15181b);
+  color: var(--c-cbd0d5);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.web-export-body .web-export-numbers {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+.web-export-numbers > label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.web-export-numbers > label > span {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.web-export-progress footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--c-858d96);
+  font-size: 10px;
+}
+.web-export-result {
+  padding: 10px;
+  border: 1px solid var(--c-363c44);
+  border-radius: 4px;
+}
+.web-export-result small {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.web-export-result ul {
+  max-height: 120px;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 16px;
+  color: var(--c-dc8a5f);
+  font-size: 10px;
+}
+.web-export-body .web-export-errors {
+  margin: 0;
+  color: var(--c-dc8a5f);
+  font-size: 11px;
+}
