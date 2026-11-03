@@ -46,6 +46,7 @@ pub fn run() {
             commands::get_object_frame_layer,
             commands::write_object_frame_layer,
             commands::export_object,
+            commands::export_objects,
             commands::import_object,
             commands::export_png,
             commands::import_png,

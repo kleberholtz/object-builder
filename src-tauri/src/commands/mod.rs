@@ -3929,6 +3929,39 @@ pub struct ObjectFileRequest {
     pub path: String,
 }
 
+fn write_object_bundle(
+    object: ThingObject,
+    client_version: String,
+    overrides: &HashMap<u32, SpriteImage>,
+    source: Option<&SpriteSource>,
+    path: &Path,
+) -> Result<()> {
+    let ids = object
+        .frame_groups
+        .iter()
+        .flat_map(|group| group.sprite_ids.iter().copied())
+        .filter(|id| *id != 0)
+        .collect::<HashSet<_>>();
+    let sprites = ids
+        .into_iter()
+        .map(|id| {
+            Ok(EmbeddedSprite {
+                id,
+                image: resolved_sprite(overrides, source, id)?,
+            })
+        })
+        .collect::<Result<Vec<_>>>()?;
+    let bundle = ObjectBundle {
+        format: "object-builder-object".into(),
+        format_version: 1,
+        client_version,
+        object,
+        sprites,
+    };
+    fs::write(path, serde_json::to_vec_pretty(&bundle)?)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn export_object(
     app: AppHandle,
@@ -3953,35 +3986,81 @@ pub async fn export_object(
         )
     };
     tauri::async_runtime::spawn_blocking(move || -> Result<()> {
-        let ids = object
-            .frame_groups
-            .iter()
-            .flat_map(|group| group.sprite_ids.iter().copied())
-            .filter(|id| *id != 0)
-            .collect::<HashSet<_>>();
-        let sprites = ids
-            .into_iter()
-            .map(|id| {
-                Ok(EmbeddedSprite {
-                    id,
-                    image: resolved_sprite(&overrides, source.as_ref(), id)?,
-                })
-            })
-            .collect::<Result<Vec<_>>>()?;
-        let bundle = ObjectBundle {
-            format: "object-builder-object".into(),
-            format_version: 1,
-            client_version: version,
+        write_object_bundle(
             object,
-            sprites,
-        };
-        fs::write(request.path, serde_json::to_vec_pretty(&bundle)?)?;
-        Ok(())
+            version,
+            &overrides,
+            source.as_ref(),
+            Path::new(&request.path),
+        )
     })
     .await
     .map_err(|error| ObjectBuilderError::IoError(error.to_string()))??;
     emit_log(&app, "INFO", "Object exported", Some(export_path), None);
     Ok(())
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ObjectBatchExportRequest {
+    pub identities: Vec<ObjectIdentity>,
+    pub directory: String,
+}
+
+/// Writes one `<kind>-<id>.obd` per object into `directory`, the same name the single
+/// export suggests. Returns how many files were written.
+#[tauri::command]
+pub async fn export_objects(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    request: ObjectBatchExportRequest,
+) -> Result<usize> {
+    let directory = request.directory.clone();
+    let (objects, version, overrides, source) = {
+        let workspace = lock_workspace(&state)?;
+        let objects = request
+            .identities
+            .iter()
+            .map(|identity| {
+                workspace
+                    .database
+                    .objects
+                    .iter()
+                    .find(|object| object.id == identity.id && object.kind == identity.kind)
+                    .cloned()
+                    .ok_or(ObjectBuilderError::ObjectNotFound(identity.id))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        (
+            objects,
+            workspace.database.version.label(),
+            workspace.sprite_overrides.clone(),
+            workspace.sprite_source.clone(),
+        )
+    };
+    let count = objects.len();
+    tauri::async_runtime::spawn_blocking(move || -> Result<()> {
+        let directory = Path::new(&request.directory);
+        for object in objects {
+            let path = directory.join(format!(
+                "{}-{}.obd",
+                format!("{:?}", object.kind).to_lowercase(),
+                object.id
+            ));
+            write_object_bundle(object, version.clone(), &overrides, source.as_ref(), &path)?;
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|error| ObjectBuilderError::IoError(error.to_string()))??;
+    emit_log(
+        &app,
+        "INFO",
+        format!("{count} objects exported"),
+        Some(directory),
+        None,
+    );
+    Ok(count)
 }
 
 #[tauri::command]
